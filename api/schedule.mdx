@@ -1,0 +1,274 @@
+---
+title: "Schedule Generation and Retrieval API"
+sidebarTitle: "Schedule"
+description: "Retrieve a saved study schedule or generate a new AI-powered plan from live assignments with custom hours and time preferences."
+---
+
+The Schedule API exposes two complementary operations: reading the study plan a student already has, and generating a fresh one on demand. Separating these into distinct endpoints matters because a client that opens to "today's plan" needs the saved schedule instantly, without triggering a new AI generation that would quietly discard the progress already ticked off. Generation pulls live assignments from all connected school platforms if no explicit assignment list is provided, so in the common case the caller only needs to supply `hours_per_day` and `preferred_time`. Generated schedules can be pushed directly to Google Calendar via the `POST /calendar/export` endpoint.
+
+<Note>
+Both schedule endpoints require authentication. Send your API key as `X-API-Key: ip_live_…`. Apply for a key at [intelliplan.tech/developers](https://intelliplan.tech/developers).
+</Note>
+
+---
+
+## GET /api/v1/schedule — Retrieve Saved Schedule
+
+Returns the study schedule the student has already generated and saved. This does not trigger a new AI generation — it returns the persisted plan exactly as it was last saved. If no schedule has been generated yet, the response will be an empty schedule object.
+
+**Required scope:** `read:schedule`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X GET https://intelliplan.tech/api/v1/schedule \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "schedule": [
+        {
+          "date": "2025-02-14",
+          "day_label": "Friday",
+          "blocks": [
+            {
+              "start": "19:00",
+              "end": "20:30",
+              "task": "AP Biology — Chapter 5 Reading Quiz",
+              "duration_minutes": 90,
+              "type": "study"
+            },
+            {
+              "start": "20:30",
+              "end": "20:45",
+              "task": "Break",
+              "duration_minutes": 15,
+              "type": "break"
+            }
+          ]
+        }
+      ],
+      "generated_at": "2025-02-13T22:15:00Z"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<ResponseField name="schedule" type="array">
+  Array of day objects, each containing a list of time blocks for that day.
+
+  <Expandable title="Day object fields">
+    <ResponseField name="date" type="string">
+      ISO 8601 date for this study day (e.g. `"2025-02-14"`).
+    </ResponseField>
+    <ResponseField name="day_label" type="string">
+      Human-readable day name (e.g. `"Friday"`).
+    </ResponseField>
+    <ResponseField name="blocks" type="array">
+      Ordered list of study and break blocks for the day.
+
+      <Expandable title="Block fields">
+        <ResponseField name="start" type="string">
+          Block start time in 24-hour `HH:MM` format.
+        </ResponseField>
+        <ResponseField name="end" type="string">
+          Block end time in 24-hour `HH:MM` format.
+        </ResponseField>
+        <ResponseField name="task" type="string">
+          Assignment or activity label for this block.
+        </ResponseField>
+        <ResponseField name="duration_minutes" type="integer">
+          Length of the block in minutes.
+        </ResponseField>
+        <ResponseField name="type" type="string">
+          Block type: `"study"` or `"break"`.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="generated_at" type="string">
+  ISO 8601 timestamp of when this schedule was generated. `null` if no schedule has been saved yet.
+</ResponseField>
+
+---
+
+## POST /api/v1/schedule/generate — Generate AI Schedule
+
+Calls the AI scheduler to build a complete multi-day study plan tailored to the student's workload. If no `assignments` array is provided, the endpoint fetches live assignments automatically from all connected school platforms. The plan is broken into focused work blocks with breaks and is saved to the student's account, replacing the previous saved schedule.
+
+**Required scope:** `write:schedule`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL — auto-fetch assignments"
+    curl -X POST https://intelliplan.tech/api/v1/schedule/generate \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "hours_per_day": 3,
+        "preferred_time": "evening"
+      }'
+    ```
+  </Tab>
+  <Tab title="Request with custom assignments">
+    ```bash title="cURL — supply assignments manually"
+    curl -X POST https://intelliplan.tech/api/v1/schedule/generate \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "hours_per_day": 2.5,
+        "preferred_time": "morning",
+        "assignments": [
+          {
+            "title": "History Essay Draft",
+            "course": "AP US History",
+            "due_date": "2025-02-18",
+            "estimated_time": 120
+          }
+        ],
+        "custom_tasks": [
+          {
+            "title": "Review biology flashcards",
+            "estimated_time": 45
+          }
+        ]
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "schedule": [
+        {
+          "date": "2025-02-14",
+          "day_label": "Friday",
+          "blocks": [
+            {
+              "start": "19:00",
+              "end": "20:00",
+              "task": "History Essay Draft",
+              "duration_minutes": 60,
+              "type": "study"
+            },
+            {
+              "start": "20:00",
+              "end": "20:10",
+              "task": "Break",
+              "duration_minutes": 10,
+              "type": "break"
+            },
+            {
+              "start": "20:10",
+              "end": "20:55",
+              "task": "Review biology flashcards",
+              "duration_minutes": 45,
+              "type": "study"
+            }
+          ]
+        }
+      ],
+      "generated_at": "2025-02-14T02:30:00Z"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Request Body
+
+<ParamField body="hours_per_day" type="number" default={2}>
+  Available study hours per day. Accepts decimal values (e.g. `2.5` for two and a half hours). Defaults to `2` if not provided.
+</ParamField>
+
+<ParamField body="preferred_time" type="string" default="evening">
+  Preferred study time of day. Accepted values: `"morning"`, `"afternoon"`, `"evening"`. Defaults to `"evening"`. The AI aligns generated blocks to the chosen time window.
+</ParamField>
+
+<ParamField body="assignments" type="array">
+  Optional explicit list of assignments to schedule. When omitted, the API fetches live assignments from all connected school platforms automatically. Each object may include `title`, `course`, `due_date`, and `estimated_time` (minutes).
+</ParamField>
+
+<ParamField body="custom_tasks" type="array">
+  Optional array of additional tasks to weave into the schedule alongside the fetched assignments. Each object may include `title` and `estimated_time` (minutes).
+</ParamField>
+
+---
+
+## Exporting to Google Calendar
+
+Once a schedule is generated, it can be pushed directly to the student's Google Calendar in one call. The export endpoint accepts the schedule data and creates individual calendar events for each study block.
+
+<Info>
+The `/calendar/export` endpoint is a web-layer route, not under `/api/v1/`. It requires an active Google Calendar OAuth connection (configured in Settings → Integrations). The student must have completed the Google OAuth flow before calling this endpoint.
+</Info>
+
+```bash title="cURL — export to Google Calendar"
+curl -X POST https://intelliplan.tech/calendar/export \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schedule_data": [
+      {
+        "date": "2025-02-14",
+        "blocks": [
+          {
+            "start": "19:00",
+            "end": "20:00",
+            "task": "History Essay Draft",
+            "type": "study"
+          }
+        ]
+      }
+    ],
+    "skip_overlaps": true
+  }'
+```
+
+<ParamField body="schedule_data" type="array" required>
+  The schedule array, in the same format returned by `GET /api/v1/schedule` or `POST /api/v1/schedule/generate`.
+</ParamField>
+
+<ParamField body="skip_overlaps" type="boolean" default={false}>
+  When `true`, the endpoint fetches existing Google Calendar events and skips creating study blocks that overlap with existing events. Defaults to `false`.
+</ParamField>
+
+```json title="Calendar export response"
+{
+  "status": "ok",
+  "created": 8,
+  "skipped": 2
+}
+```
+
+<ResponseField name="created" type="integer">
+  Number of Google Calendar events successfully created.
+</ResponseField>
+
+<ResponseField name="skipped" type="integer">
+  Number of blocks skipped due to overlaps (only non-zero when `skip_overlaps` is `true`).
+</ResponseField>
+
+---
+
+## Schedule Workflow
+
+<Steps>
+  <Step title="Check for a saved schedule">
+    Call `GET /api/v1/schedule` first. If a saved plan exists and is still current, you can display it immediately without generating a new one.
+  </Step>
+  <Step title="Generate a new schedule">
+    Call `POST /api/v1/schedule/generate` with the student's available hours and preferred time. The AI fetches live assignments automatically if none are supplied.
+  </Step>
+  <Step title="Save the schedule">
+    The generated schedule is automatically persisted to the student's account. Subsequent calls to `GET /api/v1/schedule` will return this new plan.
+  </Step>
+  <Step title="Export to Google Calendar">
+    Optionally call `POST /calendar/export` with the schedule data to create Google Calendar events for each study block. Pass `skip_overlaps: true` to avoid double-booking.
+  </Step>
+</Steps>
+
+<Warning>
+Generating a new schedule replaces the previously saved one. If a student has manually adjusted their saved schedule or ticked off progress, trigger a new generation only on explicit user action — not automatically on app open.
+</Warning>

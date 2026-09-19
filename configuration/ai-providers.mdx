@@ -1,0 +1,281 @@
+---
+title: "Configuring AI Providers: Gemini, Groq, and Claude"
+sidebarTitle: "AI Providers"
+description: "Set up IntelliPlan's AI chain: Gemini primary, Groq fallback, Claude for paid users — rate limit tiers, per-capability keys, Fish Audio, and Ollama."
+---
+
+IntelliPlan routes every AI feature — the Plani tutor, the Command Center briefing, image understanding, voice transcription, and read-aloud — through a single module (`ai_provider.py`) that implements a cascading provider chain. Gemini is the primary provider; when it exhausts its quota or returns an error, the chain falls automatically to Groq. Paid users have Claude inserted at the front of the chain. This architecture means a quota event or a provider outage is handled silently in most cases, without any deploy or manual intervention.
+
+<Tip>
+The Gemini free tier allows only **20 requests per day** on `gemini-2.5-flash`. In a real classroom environment that quota is spent within minutes. Setting a free Groq key at [console.groq.com/keys](https://console.groq.com/keys) takes two minutes and keeps every AI feature running after Gemini's daily cap is hit. In practice, `GROQ_API_KEY` should be treated as required.
+</Tip>
+
+---
+
+## Provider Chain
+
+IntelliPlan defines three request tiers, each with its own ordered fallback chain:
+
+<Tabs>
+  <Tab title="Standard">
+    Used for the Plani tutor, most chat responses, and complex reasoning tasks.
+
+    | Priority | Provider | Model |
+    |---|---|---|
+    | 1 | Gemini | `gemini-2.5-flash` |
+    | 2 | Gemini | `gemini-3.5-flash-lite` |
+    | 3 | Groq | `openai/gpt-oss-120b` |
+    | 4 | Groq | `openai/gpt-oss-20b` |
+
+    <Note>
+    Gemini's free-tier quota is counted **per model** — a 429 on `gemini-2.5-flash` does not affect `gemini-3.5-flash-lite`'s allowance. The intra-Google step is what kept the tutor answering after the 20-request-a-day cap was spent; before it, one exhausted model took every AI feature in the product down with it.
+    </Note>
+  </Tab>
+  <Tab title="Fast">
+    Used for the daily Command Center briefing and any task where speed matters more than depth.
+
+    | Priority | Provider | Model |
+    |---|---|---|
+    | 1 | Gemini | `gemini-3.5-flash-lite` |
+    | 2 | Gemini | `gemini-2.5-flash` |
+    | 3 | Groq | `openai/gpt-oss-20b` |
+    | 4 | Groq | `openai/gpt-oss-120b` |
+  </Tab>
+  <Tab title="Vision">
+    Used for image understanding and visual tasks.
+
+    | Priority | Provider | Model |
+    |---|---|---|
+    | 1 | Gemini | `gemini-2.5-flash` |
+    | 2 | Gemini | `gemini-3.5-flash-lite` |
+    | 3 | Groq | `qwen/qwen3.8-27b` |
+  </Tab>
+</Tabs>
+
+For paid-plan users, **Claude** is prepended to each chain before Gemini:
+
+| Tier | Paid-First Model |
+|---|---|
+| Standard | `claude-sonnet-5` |
+| Fast | `claude-haiku-4-5-20251001` |
+| Vision | `claude-sonnet-5` |
+
+Claude is only reached if `ANTHROPIC_API_KEY` is set and the request comes from a paid account. An unset key simply drops Claude from the chain entirely — it does not cause an error.
+
+---
+
+## Setting Up Google Gemini
+
+Gemini is IntelliPlan's primary provider for all AI features.
+
+<Steps>
+  <Step title="Get an API key">
+    Visit [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and create a new API key. No billing account is required for the free tier.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash title=".env"
+    GEMINI_API_KEY=AIza...
+    ```
+  </Step>
+  <Step title="Optional: override model names">
+    The default models are set in `ai_provider.py` and can be overridden per deployment:
+
+    ```bash title=".env"
+    # Defaults — only set these to override
+    # GEMINI_STANDARD_MODEL=gemini-2.5-flash
+    # GEMINI_FAST_MODEL=gemini-3.5-flash-lite
+    # GEMINI_VISION_MODEL=gemini-2.5-flash
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Setting Up Groq (Strongly Recommended)
+
+Groq serves as the fallback for all three tiers and is the only provider for speech transcription (Whisper).
+
+<Steps>
+  <Step title="Create a free account">
+    Go to [console.groq.com](https://console.groq.com) and sign up. No credit card is required.
+  </Step>
+  <Step title="Generate an API key">
+    Navigate to **API Keys → Create API Key** and copy the key.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash title=".env"
+    GROQ_API_KEY=gsk_...
+    ```
+  </Step>
+  <Step title="Optional: separate keys per capability">
+    Speech transcription and image understanding can each run on their own Groq key so that a long voice session cannot exhaust the key the tutor's text answers need:
+
+    ```bash title=".env"
+    GROQ_AUDIO_KEY=gsk_...       # Whisper transcription
+    GROQ_VISUAL_API_KEY=gsk_...  # Vision / image understanding
+    ```
+
+    Both fall back to `GROQ_API_KEY` when unset.
+  </Step>
+</Steps>
+
+---
+
+## Setting Up Anthropic Claude (Paid Plan)
+
+Claude is the paid-plan provider. It is never called on free or guest accounts, and an unset `ANTHROPIC_API_KEY` simply removes it from the chain.
+
+<Steps>
+  <Step title="Get an Anthropic API key">
+    Create an account at [console.anthropic.com](https://console.anthropic.com) and generate an API key under **API Keys**.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash title=".env"
+    ANTHROPIC_API_KEY=sk-ant-...
+    ```
+  </Step>
+  <Step title="Designate paid users">
+    Before a billing system is in place, grant paid access to specific email addresses:
+
+    ```bash title=".env"
+    PAID_USER_EMAILS=alice@example.com,bob@example.com
+    ```
+
+    These accounts receive Claude before Gemini in the provider chain.
+  </Step>
+</Steps>
+
+---
+
+## Read-Aloud Voice (Fish Audio)
+
+Fish Audio powers Plani's read-aloud feature. The four voices available to students are AI-designed rather than cloned from real people.
+
+<Steps>
+  <Step title="Get a Fish Audio API key">
+    Sign up at [fish.audio](https://fish.audio) and navigate to **API Keys** to generate a key.
+  </Step>
+  <Step title="Set the environment variable">
+    ```bash title=".env"
+    FISH_AUDIO_KEY=...
+
+    # Optional overrides
+    # FISH_AUDIO_MODEL=s2.1-pro-free
+    # FISH_AUDIO_VOICE=536d3a5e000945adb7038665781a4aca  # default: Ethan
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Without `FISH_AUDIO_KEY`, the read-aloud button is hidden in the tutor sidebar. Students will not see an error — the feature simply does not appear.
+</Note>
+
+---
+
+## Media Generation (Pollinations)
+
+Pollinations provides AI image, video, and 3D generation features.
+
+```bash title=".env"
+POLLINATIONS_API_KEY=sk_...      # Server-side secret key only
+
+# Optional model overrides
+# POLLINATIONS_IMAGE_MODEL=flux
+# POLLINATIONS_VIDEO_MODEL=seedance-2.0-fast
+# POLLINATIONS_3D_MODEL=trellis-2
+```
+
+<Warning>
+Use only an `sk_` secret key here. A publishable `pk_` key in server-side code would allow any visitor to spend the Pollinations balance. Pollinations keys are used server-side only and never sent to the browser.
+</Warning>
+
+---
+
+## AI Kill Switch
+
+To disable every AI feature site-wide without a deploy — for example during a cost emergency or a provider outage — set the kill switch variable:
+
+```bash title=".env"
+AI_KILL_SWITCH=1
+```
+
+Unset it or set it to `0` to re-enable. The change takes effect on the next request after the environment reloads; no restart is needed on most PaaS platforms that support live variable updates.
+
+---
+
+## Rate Limit Tiers
+
+The AI firewall (`ai_firewall.py`) enforces per-account request and token limits. Counters live in the database so they survive deploys and are shared across multiple instances. Three tiers are supported:
+
+<CardGroup cols={3}>
+  <Card title="Guest" icon="user">
+    4 req/hour · 8 req/day · 12,000 tokens/day · 1,200 max output tokens
+  </Card>
+  <Card title="Free" icon="star">
+    15 req/hour · 40 req/day · 60,000 tokens/day · 2,600 max output tokens
+  </Card>
+  <Card title="Paid" icon="crown">
+    120 req/hour · 600 req/day · 1,500,000 tokens/day · 4,000 max output tokens
+  </Card>
+</CardGroup>
+
+All six limit variables are optional — the defaults above apply when they are unset. Override them in `.env` to tune for your deployment:
+
+```bash title=".env"
+# Guest
+# AI_GUEST_RPH=4
+# AI_GUEST_RPD=8
+# AI_GUEST_TPD=12000
+# AI_GUEST_MAX_OUTPUT=1200
+
+# Free
+# AI_FREE_RPH=15
+# AI_FREE_RPD=40
+# AI_FREE_TPD=60000
+# AI_FREE_MAX_OUTPUT=2600
+
+# Paid
+# AI_PAID_RPH=120
+# AI_PAID_RPD=600
+# AI_PAID_TPD=1500000
+# AI_PAID_MAX_OUTPUT=4000
+```
+
+---
+
+## Local AI with Ollama
+
+For local development or privacy-sensitive deployments, IntelliPlan can route all AI calls to a local [Ollama](https://ollama.com) instance instead of Groq. The same provider chain applies — Ollama replaces Groq as the fallback, or becomes the primary if Gemini is also unset.
+
+<Steps>
+  <Step title="Install Ollama and pull models">
+    ```bash
+    # macOS
+    brew install ollama
+
+    # Start the daemon (binds to http://localhost:11434)
+    ollama serve
+
+    # Pull the models IntelliPlan uses
+    ollama pull llama3.3         # main tutor + chatbot
+    ollama pull llama3.1:8b      # fast moderation model
+    ```
+  </Step>
+  <Step title="Point IntelliPlan at the local daemon">
+    ```bash title=".env"
+    OLLAMA_BASE_URL=http://localhost:11434
+
+    # Optional: override the Groq→Ollama model tag map
+    # OLLAMA_MODEL_MAP={"llama-3.3-70b-versatile":"llama3.3","llama-3.1-8b-instant":"llama3.1:8b"}
+    ```
+
+    When `OLLAMA_BASE_URL` is set, `chatbot_api._llm_chat()` routes every call — the tutor, Plani, input moderation, output moderation — to Ollama's OpenAI-compatible `/v1/chat/completions` endpoint. No code change is required.
+  </Step>
+  <Step title="Unset to revert to Groq">
+    Remove `OLLAMA_BASE_URL` from your environment (or leave it blank) to fall back to Groq. A process restart is needed for the change to take effect.
+  </Step>
+</Steps>
+
+<Tip>
+The repo ships an MCP server at `mcp/ollama_mcp.py` that exposes `ollama_chat`, `ollama_generate`, and `ollama_list_models` to Claude Code. See `OLLAMA.md` in the repository root for full setup instructions, including how to validate the MCP connection with `/mcp` inside a Claude Code session.
+</Tip>

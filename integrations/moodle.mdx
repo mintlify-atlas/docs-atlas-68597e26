@@ -1,0 +1,118 @@
+---
+title: "Connect Moodle to IntelliPlan"
+sidebarTitle: "Moodle"
+description: "Import assignments and calendar events from any Moodle instance into IntelliPlan using your site URL and a web-services token — no admin approval needed."
+---
+
+Moodle is one of the most widely deployed open-source learning management systems in the world, used at thousands of universities, colleges, and schools. IntelliPlan connects to any Moodle instance using your site's URL and a personal web-services token — a credential Moodle generates for your account that grants read access to course data. Unlike Blackboard, no institutional administrator needs to pre-approve IntelliPlan: as long as your Moodle administrator has web services enabled on the site (most do), you can generate a token and connect immediately.
+
+## What Gets Imported
+
+When Moodle is connected, IntelliPlan imports:
+
+- **Assignments** — title, due date, course name, and maximum grade from all enrolled courses
+- **Calendar events** — course-level events visible in the Moodle calendar, including assignment deadlines published as events
+- **Course names** — used for grouping in the Classes View and as AI scheduler context
+
+## Environment Variable
+
+Moodle integration is enabled by default. A single environment variable controls whether the option appears in the IntelliPlan UI:
+
+```env title=".env"
+# Moodle web services — enabled by default
+MOODLE_ENABLED=1
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `MOODLE_ENABLED` | `1` | Set to `0` to hide the Moodle connection option in the UI while an institution is not yet ready to issue web-service tokens |
+
+## Getting a Moodle Web-Services Token
+
+<Steps>
+  <Step title="Log in to your Moodle instance">
+    Navigate to your institution's Moodle site (e.g. `https://moodle.university.edu`) and sign in with your student account.
+  </Step>
+  <Step title="Open your profile security settings">
+    Click your name or avatar in the top-right corner, then go to **Preferences → Security keys**. The exact menu path may vary depending on your institution's Moodle theme.
+  </Step>
+  <Step title="Generate or copy a security key">
+    Moodle lists your existing web-service tokens on this page. If no token exists for the **Moodle mobile web service**, click **Create token** or **Reset token**.
+
+    Copy the token string — it looks like a 32-character hexadecimal string.
+  </Step>
+  <Step title="Enter credentials in IntelliPlan">
+    Go to **Settings → Integrations → Moodle** and enter:
+    - **Site URL:** your institution's Moodle base URL (e.g. `https://moodle.university.edu`)
+    - **Web-services token:** the token copied above
+  </Step>
+  <Step title="Confirm the connection">
+    IntelliPlan will call the Moodle web-services API to verify the token and fetch your enrolled courses. If successful, assignments are imported immediately.
+  </Step>
+</Steps>
+
+<Note>
+  If you do not see **Security keys** or **Preferences** in your Moodle account, ask your institution's Moodle administrator to enable the **Moodle mobile web service** and confirm that your account has permission to use web services. Most student accounts have this enabled by default at institutions that use Moodle for mobile apps.
+</Note>
+
+## Connecting via the API
+
+Moodle manual connections are handled through a dedicated endpoint:
+
+```http
+POST /api/lms/connect/moodle/manual
+Content-Type: application/json
+
+{
+  "site_url": "https://moodle.university.edu",
+  "token": "your32charactertoken"
+}
+```
+
+You can also use the higher-level LMS connect flow, which returns metadata about what the manual connection requires before starting it:
+
+```http
+POST /api/lms/connect/moodle
+```
+
+## Connection Management
+
+```http
+GET  /api/lms/status/moodle
+POST /api/lms/moodle/sync
+POST /api/lms/disconnect/moodle
+```
+
+A manual sync triggers a fresh fetch of all assignments and events from the Moodle web-services API. Unlike OAuth-based integrations, there is no token refresh — Moodle web-services tokens do not expire by default. If you reset your token in Moodle's Security Keys page, update it in IntelliPlan Settings.
+
+## Moodle Web-Services API
+
+IntelliPlan calls Moodle's standard REST web-services layer. The base URL for all calls is:
+
+```
+https://<your_moodle_site>/webservice/rest/server.php
+```
+
+Authentication uses the token as a query parameter (`wstoken=<token>`) and requests are formatted as REST calls (`moodlewsrestformat=json`). The functions called include:
+
+- `core_enrol_get_users_courses` — retrieve enrolled courses
+- `mod_assign_get_assignments` — fetch assignments for each course
+- `core_calendar_get_calendar_events` — fetch upcoming calendar events
+
+## Troubleshooting
+
+<Accordion title="'Invalid token' when connecting">
+  The token must be copied exactly — it is case-sensitive and contains no spaces. Return to Moodle's **Preferences → Security keys** page and verify the token matches what you entered. If the token was recently reset, enter the new one in IntelliPlan Settings.
+</Accordion>
+
+<Accordion title="The Moodle option doesn't appear in IntelliPlan">
+  Check that `MOODLE_ENABLED` is set to `1` (or is absent entirely, since `1` is the default). If you are running a local IntelliPlan instance, confirm the `.env` file has not overridden it to `0`.
+</Accordion>
+
+<Accordion title="I can't find Security keys in my Moodle account">
+  Ask your institution's Moodle administrator to verify that the **Moodle mobile web service** is enabled at **Site administration → Plugins → Web services → Manage services**, and that your account role has the `webservice/rest:use` capability. Students at institutions using the Moodle app should already have this enabled.
+</Accordion>
+
+<Accordion title="Assignments are imported but calendar events are missing">
+  Not all Moodle configurations publish assignment deadlines as calendar events. If a teacher has not enabled calendar publication for an assignment, it will still appear as a standard assignment in IntelliPlan but not in the events feed. This is a teacher-side Moodle setting and cannot be changed from IntelliPlan.
+</Accordion>

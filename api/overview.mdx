@@ -1,0 +1,243 @@
+---
+title: "IntelliPlan REST API — Developer Overview"
+sidebarTitle: "Overview"
+description: "A complete reference to the IntelliPlan public REST API: base URL, authentication, error format, versioning, rate limits, and endpoint groups."
+---
+
+The IntelliPlan REST API gives your application direct, programmatic access to the same student data that powers the IntelliPlan dashboard — assignments, grades, study schedules, streak progress, and the learner identity profile. Every route lives under a stable `v1` prefix, every response carries a traceable request ID, and every failure uses a single, predictable error envelope so you never have to guess what went wrong. Whether you are building a mobile companion app, an automation script, or a custom integration, this reference is your starting point.
+
+## Base URL
+
+All API requests target the following base URL. There are no environment-specific subdomains — the versioned path is the stable surface.
+
+```
+https://intelliplan.tech/api/v1/
+```
+
+<Note>
+  Every path in this reference is relative to the base URL above. For example, `GET /api/v1/me` is the full path for the authenticated user endpoint.
+</Note>
+
+## Authentication
+
+The API supports two authentication schemes. They are not interchangeable — use the one that matches your use case.
+
+| Scheme | Header | Best For |
+|--------|--------|----------|
+| **API Key** | `X-API-Key: ip_live_…` | Third-party apps and integrations |
+| **Bearer Token** | `Authorization: Bearer …` | First-party clients (MCP server, browser extension) |
+
+**API Keys** are scoped, revocable, and rate-limited per key. Apply for one at [intelliplan.tech/developers](https://intelliplan.tech/developers). Read-only applications are approved automatically; anything requesting write scopes goes to a human reviewer.
+
+**Bearer Tokens** are obtained by posting credentials to `POST /api/v1/auth/token`. They carry every scope and cannot be revoked without rotating the server's secret key — so they are reserved for first-party clients where the user is authenticating as themselves.
+
+See the [Authentication guide](/api/authentication) for detailed instructions, scope definitions, and code examples.
+
+## Liveness Probe
+
+Before burning rate-limit budget, you can confirm the API is reachable without any credential:
+
+```bash title="Health check"
+curl https://intelliplan.tech/api/v1/health
+```
+
+```json title="Response"
+{
+  "status": "ok",
+  "version": "v1",
+  "time": "2025-01-15T18:32:00.000000"
+}
+```
+
+## A Simple Authenticated Request
+
+Here is a complete example using an API key to fetch the authenticated user's profile:
+
+```bash title="Fetch your profile with an API key"
+curl https://intelliplan.tech/api/v1/me \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+```
+
+```json title="Response"
+{
+  "id": 42,
+  "email": "student@university.edu",
+  "name": "Alex Chen",
+  "created_at": "2024-09-01T12:00:00",
+  "credential": {
+    "type": "api_key",
+    "app_name": "My Study App",
+    "key_prefix": "ip_live_abc123",
+    "scopes": ["read:profile", "read:assignments"]
+  }
+}
+```
+
+## Response Headers
+
+Every response from `/api/v1/*` includes these headers regardless of success or failure:
+
+| Header | Description |
+|--------|-------------|
+| `X-Request-Id` | A 16-character hex ID unique to this request. Provide this when reporting issues. |
+| `X-IntelliPlan-API-Version` | Always `v1`. |
+| `X-RateLimit-Limit` | Requests per minute ceiling for the authenticated key. |
+| `Cache-Control` | Always `no-store` — API responses are per-credential and must not be cached. |
+
+## Error Envelope
+
+Every failure — regardless of the HTTP status code — returns the same JSON envelope. Your error handler only needs to be written once.
+
+```json title="Error envelope format"
+{
+  "status": "error",
+  "error": "insufficient_scope",
+  "message": "This key is not authorized for that. Missing scope(s): read:grades.",
+  "request_id": "a1b2c3d4e5f60718"
+}
+```
+
+<ResponseField name="status" type="string">
+  Always `"error"` on failure.
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  A machine-readable error code. See the table below.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  A human-readable explanation. Suitable to display in logs; not guaranteed stable across releases.
+</ResponseField>
+
+<ResponseField name="request_id" type="string">
+  The same 16-character hex ID as the `X-Request-Id` response header. Quote this when filing a support request.
+</ResponseField>
+
+### Error Codes
+
+| Code | HTTP Status | When It Appears |
+|------|-------------|-----------------|
+| `invalid_request` | 400 | Missing or malformed request parameters |
+| `unauthorized` | 401 | No valid credential sent |
+| `insufficient_scope` | 403 | Credential is valid but lacks a required scope |
+| `not_found` | 404 | No endpoint at this path |
+| `method_not_allowed` | 405 | Wrong HTTP verb for this endpoint |
+| `rate_limited` | 429 | Too many requests; back off and retry |
+| `upstream_failed` | 502 | IntelliPlan's internal call to the school platform failed |
+| `server_error` | 500 | Unexpected server-side failure |
+
+<Tip>
+  When you receive a `rate_limited` error, the response may include a `retry_after` field with the number of seconds to wait before retrying.
+</Tip>
+
+## Versioning
+
+The current API version is **v1**, reflected in every path and in the `X-IntelliPlan-API-Version` response header. The API index at `GET /api/v1/` (or `GET /api/v1/docs`) always returns the current version, available scopes, and a live listing of all endpoints.
+
+```bash title="API discovery"
+curl https://intelliplan.tech/api/v1/docs
+```
+
+## Rate Limiting
+
+Rate limits are enforced per credential, not per IP address. This means a noisy integration cannot consume another key's budget, and multiple users behind a shared office network each get their own allowance.
+
+| Tier | Default limit |
+|------|---------------|
+| Standard (auto-approved read-only keys) | 60 requests / minute |
+| Medium volume (self-declared, approved) | 300 requests / minute |
+| High volume (self-declared, human-reviewed) | 1,000 requests / minute |
+
+The `X-RateLimit-Limit` header on every response tells you the ceiling for the current key. When you exceed it, you receive a `429 rate_limited` error. Back off exponentially and resume when `retry_after` seconds have elapsed.
+
+<Warning>
+  Rate limit ceilings for `medium` and `high` volume tiers are self-declared at application time. High-volume applications are subject to human review before approval.
+</Warning>
+
+## Applying for an API Key
+
+Navigate to [intelliplan.tech/developers](https://intelliplan.tech/developers) while signed in to your IntelliPlan account. You will need:
+
+<Steps>
+  <Step title="Describe your application">
+    Provide an app name and a use-case description of at least 40 characters. This is what reviewers read for write-scope applications.
+  </Step>
+  <Step title="Select scopes">
+    Choose the minimum scopes your integration needs. Read-only scopes are auto-approved; write scopes require human review (typically within two business days).
+  </Step>
+  <Step title="Declare expected volume">
+    Choose `low`, `medium`, or `high`. This sets your initial rate-limit ceiling.
+  </Step>
+  <Step title="Accept the API terms">
+    Check the acceptance box to proceed.
+  </Step>
+  <Step title="Copy your key immediately">
+    Auto-approved applications receive the key in the same response. **The plaintext secret is shown exactly once.** IntelliPlan stores only a SHA-256 hash — if you lose the key, roll it from the developer dashboard.
+  </Step>
+</Steps>
+
+Each IntelliPlan account can hold up to **5 active or pending keys**. Revoke unused keys before applying for new ones.
+
+## Endpoint Groups
+
+<CardGroup cols={2}>
+  <Card title="Identity & Profile" icon="user" href="/api/authentication">
+    `GET /api/v1/me` — authenticated user info.
+    `GET /api/v1/identity` and `PATCH /api/v1/identity` — student learning profile (grade level, focus areas, goals, availability).
+    Requires `read:profile`.
+  </Card>
+  <Card title="Assignments" icon="list-check" href="/api/assignments">
+    `GET /api/v1/assignments` — unified assignment feed from every connected platform.
+    `GET /api/v1/tasks` — all tasks including manual and Notion-synced items.
+    `POST /api/v1/tasks` — create a manual task.
+    `POST /api/v1/assignments/dismiss` and `/restore` — mark done or undo.
+    Requires `read:assignments` or `write:tasks`.
+  </Card>
+  <Card title="Tests" icon="pencil" href="/api/assignments">
+    `GET /api/v1/tests` — all assignments flagged as tests.
+    `POST /api/v1/tests` — mark an assignment as a test.
+    `DELETE /api/v1/tests` — unmark a test.
+    Requires `read:tests` or `write:tests`.
+  </Card>
+  <Card title="Schedule" icon="calendar" href="/api/schedule">
+    `GET /api/v1/schedule` — retrieve the student's saved study plan.
+    `POST /api/v1/schedule/generate` — build a new AI study schedule. Accepts `assignments`, `hours_per_day`, `preferred_time`, and `custom_tasks`.
+    Requires `read:schedule`.
+  </Card>
+  <Card title="Grades" icon="chart-bar" href="/api/grades">
+    `GET /api/v1/grades` — course grades and GPA from the connected school platform.
+    Grades carry their own scope (`read:grades`) separate from assignments — knowing what is due is a different trust level than knowing what the student scored.
+  </Card>
+  <Card title="Streak & Sparks" icon="fire" href="/api/streak">
+    `GET /api/v1/streak` — streak length, sparks balance, freeze count, current level, and quest state.
+    Requires `read:streak`.
+  </Card>
+  <Card title="Push Notifications" icon="bell" href="/api/authentication">
+    `POST /api/v1/push/register` — register an Expo push token for deadline reminders.
+    `POST /api/v1/push/unregister` — remove a device token on sign-out.
+    Requires `read:profile`.
+  </Card>
+  <Card title="Authentication" icon="key" href="/api/authentication">
+    `POST /api/v1/auth/token` — exchange email and password for a Bearer token.
+    No credential required to call; returns `token`, `token_type`, `scopes`, and basic user info.
+  </Card>
+</CardGroup>
+
+## Discovery Endpoint
+
+The API self-documents. `GET /api/v1/` (or `GET /api/v1/docs`) returns a complete machine-readable index of every endpoint, all scopes and their descriptions, the error shape, and current rate-limit policy — no authentication required.
+
+```bash title="Fetch the API index"
+curl https://intelliplan.tech/api/v1/docs
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="lock" href="/api/authentication">
+    Learn how to obtain an API key or Bearer token, understand scopes, and see code samples for both auth methods.
+  </Card>
+  <Card title="Developers Portal" icon="browser" href="https://intelliplan.tech/developers">
+    Apply for an API key, manage your applications, and roll compromised keys from the developer dashboard.
+  </Card>
+</CardGroup>

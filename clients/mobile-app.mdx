@@ -1,0 +1,255 @@
+---
+title: "IntelliPlan Mobile App (Expo / React Native)"
+sidebarTitle: "Mobile App"
+description: "Run IntelliPlan natively on Android and iOS with the Expo app in mobile/ — bearer token auth, offline caching, push notifications, and EAS build profiles."
+---
+
+The IntelliPlan mobile app is a React Native application built with Expo, living in the `mobile/` directory of the repository. It shares the same Flask API as the web app — authenticated via a bearer token issued by `/api/v1/auth/token` — so every feature you build on the backend is immediately available on mobile without a parallel implementation. The app targets iOS, Android, and the web from a single codebase and passes all 17 `expo-doctor` health checks. It is not yet on the App Store or Google Play; `eas.json` build profiles are ready and waiting for store accounts.
+
+## What's in the App
+
+The app is organized around five tabs that follow the shape of a school day:
+
+<CardGroup cols={2}>
+  <Card title="Today" icon="sun">
+    The Command Center — AI briefing, Academic Health dial, a 7-day workload forecast, and a ranked "do this first" list with a `why_now` explanation on each item.
+  </Card>
+  <Card title="Due" icon="list-check">
+    Every assignment from every connected platform, grouped into Overdue / Today / This week / Later. Tap the circle to complete; a Done filter lets you undo it.
+  </Card>
+  <Card title="Plan" icon="calendar">
+    The saved study plan plus a generator (hours per day × best focus window). Includes a "Catch me up" solver that re-plans the remaining week around sessions that slipped.
+  </Card>
+  <Card title="Grades" icon="chart-bar">
+    Three segments: Current percentages, per-course Forecast with trend confidence, and What you know — subject mastery and concepts most likely to need review.
+  </Card>
+  <Card title="Plani" icon="robot">
+    The AI tutor with conversation history, plus Snap & Solve: photograph a worksheet and Plani works through every visible problem.
+  </Card>
+  <Card title="Focus Timer" icon="stopwatch">
+    A full-screen study timer against one piece of work, started from Today, a task, or a plan block. The server is the clock of record — elapsed time syncs every 15 seconds.
+  </Card>
+</CardGroup>
+
+## Running Locally
+
+<Steps>
+  <Step title="Install dependencies">
+    Navigate into the `mobile/` directory and install npm packages:
+
+    ```bash
+    cd mobile
+    npm install
+    ```
+  </Step>
+  <Step title="Start the dev server">
+    Run one of the start scripts below. The default `npm start` points at a **local** Flask server (auto-detected from the LAN address Expo serves from). Use `start:prod` to point at production:
+
+    ```bash
+    # Local Flask server (auto-detected LAN address)
+    npm start
+
+    # Production API at https://intelliplan.tech
+    npm run start:prod
+
+    # Production API over ngrok/Expo tunnel (for networks blocking peer traffic)
+    npm run start:tunnel
+    ```
+  </Step>
+  <Step title="Open on a device or simulator">
+    After the Metro bundler starts, use the keyboard shortcuts in the terminal:
+
+    ```
+    Press a  →  open in Android emulator
+    Press i  →  open in iOS simulator
+    Press w  →  open in web browser
+    ```
+
+    On a physical phone, scan the QR code with **Expo Go** (Android: in-app scanner; iOS: Camera app). Your phone and laptop must be on the same Wi-Fi, or use `npm run start:tunnel`.
+  </Step>
+  <Step title="Run health checks">
+    Verify the project configuration before building:
+
+    ```bash
+    npx expo-doctor        # should report 17/17 checks passed
+    npx tsc --noEmit       # TypeScript type check
+    npx expo export --platform android   # dry-run bundle
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Physical Android phones reach the host machine at `http://10.0.2.2:5000`; iOS simulators use `http://localhost:5000`. These are the `__DEV__` defaults already set in `lib/config.ts`. For a real phone on Expo Go, set `EXPO_PUBLIC_API_BASE` to your machine's LAN address (e.g. `http://192.168.1.20:5000`).
+</Note>
+
+## API Base Override
+
+The `EXPO_PUBLIC_API_BASE` environment variable overrides the default server for any build:
+
+```bash
+# Point at a staging server
+EXPO_PUBLIC_API_BASE=https://staging.intelliplan.tech npx expo start
+
+# Point at a local server (physical phone on LAN)
+EXPO_PUBLIC_API_BASE=http://192.168.1.20:5000 npx expo start
+```
+
+`lib/config.ts` defaults to production in release builds, so `EXPO_PUBLIC_API_BASE` is the only knob you need — there is no risk of accidentally shipping a build that points at localhost.
+
+## Authentication
+
+Sign-in exchanges email and password for a bearer token at `POST /api/v1/auth/token`. The token is stored in the device keychain via `expo-secure-store` (web falls back to `AsyncStorage`). Flask's `request_loader` in `App.py` resolves this bearer for **every** `@login_required` view, not just `/api/v1/*`, which means the app can call `/api/today`, `/api/grade-predictions`, `/api/tutor`, and other web-facing routes directly without a separate mobile API layer.
+
+<Tabs>
+  <Tab title="Token request">
+    ```http
+    POST /api/v1/auth/token
+    Content-Type: application/json
+
+    {
+      "email": "student@example.edu",
+      "password": "••••••••"
+    }
+    ```
+  </Tab>
+  <Tab title="Authenticated request">
+    ```http
+    GET /api/today
+    Authorization: Bearer <token>
+    ```
+  </Tab>
+  <Tab title="Grade predictions">
+    ```http
+    GET /api/grade-predictions
+    Authorization: Bearer <token>
+    ```
+  </Tab>
+</Tabs>
+
+## Offline Behaviour
+
+The app is designed to degrade gracefully when there's no signal:
+
+- **Reads are cached.** Every successful response is stored via `lib/useQuery.ts`. Opening the app offline shows the last loaded data behind an "Offline" notice rather than a spinner into an error.
+- **Writes are queued.** `lib/queue.ts` persists writes locally and replays them when connectivity returns. Only network-level failures (status 0, 502, 503, 504) are queued — a 400 surfaces immediately and rolls back the UI row so bugs don't hide.
+- **404 is not an error.** Several endpoints sit behind feature flags; a 404 renders a "not available" screen rather than an error state.
+
+## EAS Build Profiles
+
+`eas.json` defines three build profiles for Expo Application Services:
+
+```json title="mobile/eas.json"
+{
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "http://10.0.2.2:5000"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://intelliplan.tech"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": { "buildType": "app-bundle" },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://intelliplan.tech"
+      }
+    }
+  }
+}
+```
+
+<Accordion title="development — dev client, internal distribution">
+  Builds a custom Expo dev client for internal distribution. `EXPO_PUBLIC_API_BASE` defaults to the Android emulator host `10.0.2.2:5000`. Use this profile to test server-side push notifications, which **do not work in Expo Go on Android (SDK 53+)**.
+
+  ```bash
+  npx eas build --profile development --platform android
+  npx eas build --profile development --platform ios
+  ```
+</Accordion>
+
+<Accordion title="preview — internal APK / TestFlight">
+  Produces a distributable APK for Android (sideloadable, no Play Store needed) and a TestFlight build for iOS. Points at production. Hand this to beta testers.
+
+  ```bash
+  npx eas build --profile preview --platform all
+  ```
+</Accordion>
+
+<Accordion title="production — store AAB / IPA">
+  Produces an Android App Bundle (AAB) for Google Play and an IPA for the App Store. `autoIncrement: true` bumps `versionCode` / `buildNumber` automatically on each build.
+
+  ```bash
+  npx eas build    --profile production --platform all
+  npx eas submit   --profile production --platform all
+  ```
+</Accordion>
+
+<Warning>
+  The app is **not yet on the App Store or Google Play**. Before the first submission you must run `npx eas init` (to fill in `extra.eas.projectId` for push tokens), set `ios.appleTeamId` and the Play service-account key in the `submit` block of `eas.json`, and bump `expo.version` in `app.json`.
+</Warning>
+
+## Push Notifications
+
+`lib/push.ts` registers an Expo push token with `POST /api/v1/push/register`. The server stores it in the same `PushSubscription` table used by browser VAPID subscriptions, so every existing reminder reaches the phone without changes at the call site. Sign-out unregisters the token first.
+
+There are **two** separate reminder mechanisms:
+
+| Mechanism | How it works | Works in Expo Go? |
+|---|---|---|
+| **Deadline reminders** | Scheduled on-device from the last-fetched task list; fire offline | ✅ Yes |
+| **Server nudges** | Remote push from the server | ❌ Not on Android SDK 53+ — use a `development` build |
+
+## Key Dependencies
+
+The app is built on Expo SDK 57 with React Native 0.86 and React 19. Notable packages from `mobile/package.json`:
+
+<Accordion title="View full dependency list">
+  | Package | Version | Purpose |
+  |---|---|---|
+  | `expo` | `^57.0.22` | Core SDK |
+  | `expo-router` | `~57.0.21` | File-based navigation |
+  | `expo-secure-store` | `~57.0.4` | Keychain token storage |
+  | `expo-notifications` | `~57.0.18` | Local and push notifications |
+  | `expo-image-picker` | `~57.0.17` | Snap & Solve photo input |
+  | `expo-document-picker` | `~57.0.2` | PDF note import |
+  | `expo-linear-gradient` | `~57.0.2` | UI gradients |
+  | `@react-native-async-storage/async-storage` | `^2.2.0` | Web-fallback token storage |
+  | `react-native-gesture-handler` | `~2.32.0` | Swipe and gesture support |
+  | `react-native-svg` | `15.15.4` | Charts and icons |
+  | `typescript` | `~6.0.3` | Type checking |
+</Accordion>
+
+## Project Structure
+
+```
+mobile/
+├── app/                    # expo-router file routes
+│   ├── (tabs)/             # Five main tabs
+│   ├── login.tsx           # Sign in + sign up
+│   ├── onboarding.tsx      # Three-step first-run flow
+│   ├── focus.tsx           # Study timer (full-screen modal)
+│   ├── task.tsx            # Task detail + actions (modal)
+│   ├── connect.tsx         # School platforms + Google Calendar (modal)
+│   ├── plan-custom.tsx     # Manual study blocks (modal)
+│   ├── settings.tsx        # Profile sheet (modal)
+│   └── new-task.tsx        # Add a task (modal)
+├── components/             # UI kit — Card, Button, Chip, TaskRow, Confirm…
+├── lib/                    # api.ts, auth.tsx, useQuery.ts, queue.ts, push.ts…
+├── theme/                  # Design tokens from ip-base.css
+├── assets/                 # App icons (generated from static/icons/icon-512.png)
+├── eas.json                # EAS build profiles
+├── package.json
+└── tsconfig.json
+```
+
+<Tip>
+  The `theme/tokens.ts` file is a direct copy of the web palette from `static/css/ip-base.css`. If the web design tokens change, regenerate with `scripts/gen-icons.py` so the phone app stays visually in sync.
+</Tip>

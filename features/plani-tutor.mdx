@@ -1,0 +1,182 @@
+---
+title: "Plani: Adaptive AI Tutor Across All Subjects"
+sidebarTitle: "Plani Tutor"
+description: "Plani is an adaptive AI tutor that builds a persistent model of how you learn — mastery scores, mistake patterns, modality routing, and durable memory."
+---
+
+Plani is IntelliPlan's dedicated AI tutor, and it is fundamentally different from a chat wrapper around a language model. Every reply Plani gives is shaped by a persistent student model that accumulates across every session: what subjects you are working on, where your mastery sits for each topic, which misconceptions keep coming back, and how you learn best. Plani never just hands over answers — it builds understanding, checks comprehension with follow-up questions, and adjusts its explanations based on what has actually worked for you in the past.
+
+## Supported Subjects
+
+Plani covers the full range of secondary and post-secondary coursework:
+
+<CardGroup cols={4}>
+  <Card title="Mathematics" icon="calculator" />
+  <Card title="Science" icon="flask" />
+  <Card title="History" icon="landmark" />
+  <Card title="English" icon="book-open" />
+  <Card title="Computer Science" icon="code" />
+  <Card title="Languages" icon="language" />
+  <Card title="Economics" icon="chart-line" />
+  <Card title="Test Prep" icon="pencil" />
+</CardGroup>
+
+Each session starts with a `[Subject: X]` tag on your message so Plani can route the conversation to the right context and update the correct mastery scores at the end.
+
+## The Adaptive Student Model
+
+The core of Plani is the adaptive layer that lives in `adaptive_tutor/`. It stores six kinds of information about you, each in its own database table:
+
+<AccordionGroup>
+  <Accordion title="Learning profile (adaptive_student_profile)">
+    Your onboarding answers: grade level, subjects you are studying, short-term and long-term goals, interests, preferred explanation style (concise / balanced / detailed), explanation length (short / medium / long), and difficulty level (easy / medium / hard). All of these are editable from the Plani sidebar at any time.
+
+    The profile also stores your **learning modality** preference (`auto` by default), which controls how Plani structures each reply.
+  </Accordion>
+  <Accordion title="Subject mastery (adaptive_subject_mastery)">
+    Per-topic mastery scores tracked with a weighted moving average: **70% of the running score** blended with **30% of the newest evidence**. Each topic also has a confidence level that grows 8 points per attempt from a floor of 20, so Plani learns to trust its own mastery estimate as you accumulate more attempts.
+
+    ```python title="adaptive_tutor/store.py — mastery constants"
+    # Mastery blends 70% of the running score with 30% of the newest evidence
+    _MASTERY_HISTORY_WEIGHT = 0.7
+    # Confidence climbs 8 points per attempt from a 20-point floor
+    _CONFIDENCE_STEP = 8
+    _CONFIDENCE_FLOOR = 20
+    ```
+  </Accordion>
+  <Accordion title="Mistake patterns (adaptive_mistake_pattern)">
+    Recurring misconceptions extracted from conversation transcripts and tracked by frequency. Plani watches for these patterns in future sessions and addresses them proactively rather than waiting for you to make the same mistake again.
+  </Accordion>
+  <Accordion title="Durable learner memory (adaptive_learner_memory)">
+    An LLM-built model of how *this specific student* learns: strengths, friction points, explanation patterns that have worked, strategies the tutor should use going forward. Refreshed every 3 turns (`_MEMORY_REFRESH_EVERY = 3`) using the last 8 turns of conversation history plus your profile.
+  </Accordion>
+  <Accordion title="Session summaries (adaptive_session_summary)">
+    At the end of each conversation, Plani writes a session summary: what topics were covered, what was understood, what was struggled with, and what should be reviewed next. These summaries also drive mastery score updates between sessions.
+  </Accordion>
+  <Accordion title="Memory imports (adaptive_memory_import)">
+    You can paste an export from another AI assistant (ChatGPT, Claude, Gemini, etc.) and Plani folds it into your learner model. The imported context is blended into the durable memory so continuity is preserved even if you have been working with a different tool.
+  </Accordion>
+</AccordionGroup>
+
+## Modality Routing
+
+Plani automatically detects how you learn best and routes each response through the matching output channels. The detection is driven by `adaptive_tutor/modality.py` and uses a weighted moving average across three modalities:
+
+<Tabs>
+  <Tab title="✨ Auto (default)">
+    Plani observes your conversation patterns and updates its modality weights over time. Once a dominant modality is detected (threshold: 40% signal share), it adjusts response structure automatically. If your scores are close across modalities, Plani treats you as blended and enables all channels.
+
+    ```python title="adaptive_tutor/modality.py — detection thresholds"
+    # A modality only wins outright once it clears this share of the signal
+    _DOMINANCE_FLOOR = 0.4
+    # Below this gap between top two modalities, learner reads as blended
+    _BLEND_GAP = 0.15
+    # Visual artifacts stay on for anyone with at least this much visual signal
+    _ARTIFACT_FLOOR = 0.35
+    ```
+  </Tab>
+  <Tab title="🎧 Auditory">
+    Responses are phrased for spoken delivery — clear structure, natural pacing, and narration-friendly language. Voice output and interactive artifacts are both enabled.
+  </Tab>
+  <Tab title="📊 Visual">
+    Responses include interactive diagrams, visualisations, and quiz artifacts rendered in sandboxed iframes. Voice output is disabled; text and artifacts are the primary channels.
+  </Tab>
+  <Tab title="📖 Reading">
+    Plain text explanations only. No voice output or interactive artifacts. Ideal for students who process information best by reading carefully structured text.
+  </Tab>
+  <Tab title="🔀 Blended">
+    All output channels active simultaneously: voice narration, interactive artifacts, and text. Used when auto-detection finds roughly equal weights across modalities.
+  </Tab>
+</Tabs>
+
+The modality weights blend at **60% history, 40% newest reading**, so your detected style shifts gradually rather than flipping abruptly.
+
+### Setting Your Modality
+
+```
+POST /api/tutor/adaptive/modality
+```
+
+Send `{ "modality": "auto" | "auditory" | "visual" | "reading" | "blended" }` to override detection with your own preference. The setting persists in your profile.
+
+## Interactive Artifacts
+
+When visual mode is active (or in auto/blended mode with sufficient visual signal), Plani can emit structured artifacts alongside its text reply:
+
+<CardGroup cols={2}>
+  <Card title="Quizzes" icon="question-circle">
+    Inline multiple-choice or free-response questions that check your understanding of the concept just explained. Rendered interactively in the chat.
+  </Card>
+  <Card title="Visualisations" icon="chart-bar">
+    Diagrams, graphs, and interactive exercises for mathematical and scientific concepts. Each visualization runs in a sandboxed iframe so it cannot affect the rest of the page.
+  </Card>
+</CardGroup>
+
+## Adaptive Tutor API
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/tutor` | POST | Multi-turn tutoring endpoint — send a message, receive Plani's reply |
+| `/api/tutor/adaptive/profile` | GET / POST | Read or update your learning profile |
+| `/api/tutor/adaptive/dashboard` | GET | Mastery scores, mistake patterns, learner memory, and recommendations |
+| `/api/tutor/adaptive/modality` | POST | Set your learning modality |
+| `/api/tutor/adaptive/summarize` | POST | Close a conversation: writes session summary, extracts mistakes, updates mastery |
+| `/api/tutor/adaptive/memory-imports` | GET / POST | List or submit a memory import from another AI assistant |
+| `/api/tutor/adaptive/mistakes/<id>/resolve` | POST | Mark a recurring mistake pattern as resolved |
+
+## Turn Orchestration
+
+Every Plani turn runs through three phases managed by `adaptive_tutor/engine.py`:
+
+<Steps>
+  <Step title="prepare_turn">
+    Before the LLM call: load the student model from the database, resolve the active modality and weights, and assemble the full adaptive system prompt via `build_adaptive_prompt()`. The prompt includes your profile, recent mastery context, active mistake patterns, and learner memory.
+  </Step>
+  <Step title="LLM call">
+    The assembled prompt plus your message is sent to the AI model (Gemini 2.5 Flash primary, Groq Llama fallback). The model sees the full student context and generates a reply shaped by it.
+  </Step>
+  <Step title="record_turn">
+    After the LLM call: refresh the durable learner memory by running `analysis.analyze_learner_memory()` on the last 8 turns. Memory is only refreshed every 3 turns to keep latency low. The result is blended into the stored modality weights.
+  </Step>
+</Steps>
+
+## Closing a Session
+
+When you finish a tutoring session, call the summarize endpoint to write the session record and update your mastery scores:
+
+```
+POST /api/tutor/adaptive/summarize
+```
+
+This triggers `summarize_conversation()` in the engine, which:
+1. Writes a session summary (topics covered, understood, struggled with, next review targets)
+2. Extracts new mistake patterns from the conversation transcript
+3. Moves mastery scores based on what was demonstrated in the session
+
+<Tip>
+  Get in the habit of closing sessions with the summarize endpoint. Mastery scores only update when a session is closed — open sessions do not contribute to your adaptive model.
+</Tip>
+
+## Graceful Degradation
+
+Every entry point in `adaptive_tutor/engine.py` wraps its analysis passes in exception handlers. If the adaptive layer is unavailable — database error, analysis timeout, or any other failure — Plani falls back to its legacy heuristic memory and still answers your question. You never see an error; the only difference is that the reply is slightly less personalised.
+
+```python title="adaptive_tutor/engine.py — design principle"
+# Every entry point swallows its own failures.
+# The tutor must answer even when the analysis passes are down.
+```
+
+## `adaptive_tutor/` Module Structure
+
+```
+adaptive_tutor/
+├── engine.py     # Per-turn orchestration: prepare_turn, record_turn, summarize_conversation
+├── store.py      # Persistent student model: six SQLAlchemy tables, lazy creation
+├── modality.py   # Learning-modality routing and weight blending
+├── analysis.py   # LLM-powered learner memory analysis and mistake extraction
+└── prompt.py     # Adaptive system-prompt builder
+```
+
+<Info>
+  All six database tables (`adaptive_student_profile`, `adaptive_subject_mastery`, `adaptive_mistake_pattern`, `adaptive_learner_memory`, `adaptive_memory_import`, `adaptive_session_summary`) are created lazily on first use. No migration step is needed for existing deployments.
+</Info>

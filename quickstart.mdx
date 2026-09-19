@@ -1,47 +1,180 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get IntelliPlan Running Locally in Minutes"
+sidebarTitle: "Quickstart"
+description: "Clone the repo, install Python dependencies, set three environment variables, and reach IntelliPlan on localhost:3000 in under five minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+Getting a local instance of IntelliPlan running is intentionally straightforward — the only hard requirement beyond Python is a free Google Gemini API key. The app falls back to SQLite automatically when no PostgreSQL `DATABASE_URL` is provided, so you can skip database setup entirely on a first run. This page walks you from a clean machine to a working local server.
 
 ## Prerequisites
 
-Before you begin, you must have:
+Before you begin, make sure you have the following:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+- **Python 3.11 or newer** — IntelliPlan's `Dockerfile` targets `python:3.13-slim`; any 3.11+ release works locally.
+- **A Google Gemini API key** — free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Gemini 2.5 Flash is the primary model for scheduling, the AI tutor, flashcard generation, and vision features.
+- **Git** — to clone the repository.
+- *(Optional)* **A Groq API key** — strongly recommended as a fallback. The Gemini free tier allows only 20 requests per day; without a Groq key, every AI feature stops when that quota is exhausted. Free key at [console.groq.com/keys](https://console.groq.com/keys).
+- *(Optional)* **Credentials for at least one school platform** — Canvas API token, Google Classroom OAuth, StudentVue login, Schoology API key, Blackboard OAuth, or a Moodle web-services token. You can register and explore the app without one, but the dashboard will be empty until a platform is connected.
 
-## Get started
+## Installation
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
-
+  <Step title="Clone the repository">
     ```bash
-    npm install your-package
+    git clone https://github.com/UAnirudh/IntelliPlan.git
+    cd IntelliPlan
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Install Python dependencies">
+    All dependencies are pinned in `requirements.txt`. A virtual environment is recommended to avoid conflicts with other projects on your machine.
 
     ```bash
-    your-cli init
+    # Create and activate a virtual environment (recommended)
+    python -m venv .venv
+    source .venv/bin/activate   # macOS / Linux
+    .venv\Scripts\activate      # Windows PowerShell
+
+    # Install dependencies
+    pip install -r requirements.txt
     ```
+
+    Key packages installed include Flask, Flask-SQLAlchemy, Flask-Login, Flask-Bcrypt, Flask-Limiter, Flask-Session, `google-genai`, `groq`, `pywebpush`, `pypdf`, `python-docx`, and `gunicorn`.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Create your .env file">
+    Copy the provided template and fill in the minimum required values:
 
     ```bash
-    your-cli start
+    cp .env.example .env
     ```
+
+    Then open `.env` in your editor. For a first run, you only need these three variables:
+
+    ```env title=".env (minimal)"
+    SECRET_KEY=change-me-to-a-long-random-string
+    GEMINI_API_KEY=your-gemini-api-key-here
+    DATABASE_URL=sqlite:///intelliplan.db
+    ```
+
+    <Tip>
+      Generate a strong `SECRET_KEY` with Python in one line:
+      ```bash
+      python -c "import secrets; print(secrets.token_hex(32))"
+      ```
+    </Tip>
+
+    The `DATABASE_URL=sqlite:///intelliplan.db` line tells Flask-SQLAlchemy to create a local SQLite file named `intelliplan.db` in the `instance/` folder — no PostgreSQL installation needed for local development.
+  </Step>
+
+  <Step title="Run the app">
+    ```bash
+    python App.py
+    ```
+
+    Flask starts a development server on port 3000 by default. Open your browser to:
+
+    ```
+    http://localhost:3000
+    ```
+
+    You should see the IntelliPlan landing page. Register a new account to reach the dashboard.
+
+    <Note>
+      `App.py` patches `sys.modules` so that subsequent `from App import ...` calls inside blueprints resolve to the same module object. This prevents duplicate `db`/`User`/Flask-app instances when running in dev mode. Do not rename the file.
+    </Note>
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Minimal .env for First Run
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+The three variables below are the absolute minimum to boot the app and use every AI feature:
+
+```env title=".env"
+# Required — Flask session signing key
+SECRET_KEY=change-me-to-a-long-random-string
+
+# Required — primary AI model (scheduling, tutor, flashcards, vision)
+GEMINI_API_KEY=
+
+# Required — database connection
+# SQLite is fine for local dev; switch to a postgres:// URL for production
+DATABASE_URL=sqlite:///intelliplan.db
+
+# Highly recommended — fallback AI when Gemini free-tier quota (20 req/day) is exhausted
+GROQ_API_KEY=
+
+# Set this so OAuth redirects work correctly
+APP_BASE_URL=http://localhost:3000
+```
+
+<Info>
+  The `.env.example` file in the repo documents every available variable, including optional ones for Google Calendar OAuth, Notion, Blackboard, push notifications (VAPID), Sentry, Resend email, reCAPTCHA, analytics (PostHog), and encryption at rest (`DATA_ENCRYPTION_KEY`). You do not need any of those to run locally.
+</Info>
+
+## Connecting Your First School Platform
+
+Once the app is running and you've created an account, connect a school platform from the **Settings** page (`/settings`):
+
+<Tabs>
+  <Tab title="Canvas">
+    1. Navigate to **Settings → Integrations → Canvas**.
+    2. Enter your Canvas instance URL (e.g. `https://canvas.instructure.com`).
+    3. Generate a personal access token in Canvas under **Account → Settings → Approved Integrations → New Access Token** and paste it into the token field.
+    4. Click **Connect**. IntelliPlan immediately imports your courses and assignments.
+
+    <Note>
+      Canvas OAuth (the "Continue with Canvas" button) requires a Developer Key registered with your Canvas instance. For local development, a personal access token is the fastest path.
+    </Note>
+  </Tab>
+  <Tab title="Google Classroom">
+    Google Classroom uses OAuth 2.0. To use it locally you need Google OAuth credentials in your `.env`:
+
+    ```env
+    GOOGLE_CLASSROOM_CLIENT_ID=
+    GOOGLE_CLASSROOM_CLIENT_SECRET=
+    GOOGLE_REDIRECT_URI=http://localhost:3000/oauth2callback
+    ```
+
+    Then navigate to **Settings → Integrations → Google Classroom** and click **Connect with Google**.
+  </Tab>
+  <Tab title="StudentVue">
+    1. Navigate to **Settings → Integrations → StudentVue**.
+    2. Enter your district URL and StudentVue credentials.
+    3. Click **Connect**. IntelliPlan uses the StudentVue API to fetch assignments and missing work.
+  </Tab>
+  <Tab title="Moodle">
+    1. Navigate to **Settings → Integrations → Moodle**.
+    2. Enter your Moodle site URL and a web-services token generated in Moodle under **Site Administration → Plugins → Web Services → Manage Tokens**.
+    3. Click **Connect**.
+
+    Moodle is enabled by default. Set `MOODLE_ENABLED=0` in `.env` to hide it while your institution is not ready to issue tokens.
+  </Tab>
+</Tabs>
+
+## Verifying Everything Works
+
+After connecting a platform, visit these pages to confirm the integration is healthy:
+
+| Page | URL | What to check |
+|---|---|---|
+| Dashboard | `/` | Assignments appear in Overdue / Today / Upcoming columns |
+| Priority View | `/priority` | Assignments are scored High / Medium / Low |
+| Classes | `/classes` | Your courses are listed with assignment counts |
+| Scheduler | `/scheduler` | "Generate Schedule" button is active |
+| Grades | `/grades` | GPA and per-course grade data loads |
+
+<Tip>
+  If the dashboard is empty after connecting, click **Sync** on the Settings page to force a fresh import. On first connect, a background sync runs automatically — give it a few seconds and refresh.
 </Tip>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Self-Hosting" icon="server" href="/self-hosting">
+    Deploy IntelliPlan to Railway or any server with Docker, Gunicorn, and a production PostgreSQL database.
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/self-hosting#environment-variables">
+    See the full list of optional variables for push notifications, Sentry, email, reCAPTCHA, and encryption at rest.
+  </Card>
+</CardGroup>

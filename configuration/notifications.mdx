@@ -1,0 +1,152 @@
+---
+title: "Push Notifications Setup with VAPID Keys"
+sidebarTitle: "Notifications"
+description: "Generate VAPID keys, configure the three push notification env vars, set up the 5-minute cron drain endpoint, and understand silencing and SMS delivery."
+---
+
+IntelliPlan delivers deadline reminders, streak nudges, and other time-sensitive alerts as Web Push notifications — the standard that works in Chrome, Firefox, Edge, and Safari without a native app. Web Push requires a VAPID key pair: a small asymmetric credential that proves to Google's, Mozilla's, and Apple's push services that a push message genuinely came from your server. Generating and storing this pair correctly is a one-time setup step, but it must be done before any notification can be delivered.
+
+---
+
+## How VAPID Works
+
+VAPID ("Voluntary Application Server Identification") is an extension to the Web Push protocol. When a student enables notifications in IntelliPlan, the browser subscribes using your **public key** — that key is baked into the subscription object stored in the database. When the server sends a push, it signs the request with the **private key**. The push service verifies the signature and delivers the message. Because the public key is embedded in every subscription, **changing the private key makes every existing subscription invalid** — the push service will reject every delivery attempt silently.
+
+---
+
+## Generating VAPID Keys
+
+IntelliPlan ships a script that generates a properly formatted key pair and prints it ready to paste into `.env` or a PaaS dashboard.
+
+<Steps>
+  <Step title="Run the generator">
+    ```bash
+    python vapid.py
+    ```
+
+    The script outputs three lines:
+
+    ```
+    Add these to your environment (Railway > Variables, or .env locally).
+    Keep VAPID_PRIVATE_KEY secret — treat it like a password.
+
+    VAPID_PUBLIC_KEY=BNxx...
+    VAPID_PRIVATE_KEY=xxxx...
+    VAPID_EMAIL=you@yourdomain.com
+    ```
+
+    The private key is a single-line base64url string (no newlines), which is the form `pywebpush` accepts and what survives a copy-paste into a PaaS dashboard without being mangled.
+  </Step>
+  <Step title="Set the three environment variables">
+    ```bash title=".env"
+    VAPID_PUBLIC_KEY=BNxx...
+    VAPID_PRIVATE_KEY=xxxx...
+    VAPID_EMAIL=notifications@yourdomain.com
+    ```
+  </Step>
+  <Step title="Store the private key securely">
+    Treat `VAPID_PRIVATE_KEY` like a database password. Store it in your PaaS secret store or a secrets manager — never commit it to version control. Write down where you stored it, because losing it is unrecoverable without invalidating all subscriptions.
+  </Step>
+</Steps>
+
+<Warning>
+**Never rotate the VAPID private key casually.** Rotating `VAPID_PRIVATE_KEY` invalidates **every existing browser subscription** across all students — each one would have to visit IntelliPlan and re-enable notifications manually. Generate the key pair once, store it in your secret store, and treat it as permanent infrastructure. If rotation is unavoidable (e.g. a key compromise), plan to notify students in advance through an in-app banner or email.
+</Warning>
+
+---
+
+## The Three VAPID Variables
+
+<ParamField path="VAPID_PUBLIC_KEY" type="string" required>
+  The base64url-encoded uncompressed ECDH public key (65 bytes, no padding). Sent to the browser when a student enables notifications. This key is **public** and safe to expose in client-side JavaScript — IntelliPlan passes it to the browser's `PushManager.subscribe()` call.
+</ParamField>
+
+<ParamField path="VAPID_PRIVATE_KEY" type="string" required>
+  The base64url-encoded raw 32-byte ECDH private key scalar. Used server-side to sign every outgoing push request. Keep this secret — it is what proves a push came from IntelliPlan and not a third party.
+</ParamField>
+
+<ParamField path="VAPID_EMAIL" type="string" required>
+  An email address a push service can use to contact you. Sent as the `sub` claim in the VAPID JWT. Some push services (including FCM) reject pushes that lack a valid `sub` claim. Use a real, monitored address — push services may send abuse notifications to it.
+</ParamField>
+
+---
+
+## Notification Delivery Cron
+
+Notifications are not delivered synchronously at the moment an event occurs. Instead, IntelliPlan writes them to an outbox table in the database and a cron job drains that outbox. This design means a single slow push cannot block a web request, and overlapping cron runs cannot double-send (rows are claimed atomically before delivery).
+
+<Steps>
+  <Step title="Set CRON_SECRET">
+    ```bash title=".env"
+    CRON_SECRET=a-long-random-secret-string
+    ```
+
+    Without this set the cron endpoint returns 503 and nothing is ever delivered.
+  </Step>
+  <Step title="Create a cron job that hits the endpoint every 5 minutes">
+    The endpoint accepts either `POST` or `GET` and both the `X-Cron-Token` and `X-Cron-Secret` header names (plus `?secret=` as a query parameter fallback):
+
+    <Tabs>
+      <Tab title="bash / Linux / macOS">
+        ```bash
+        curl -X POST https://intelliplan.tech/cron/notifications \
+             -H "X-Cron-Token: $CRON_SECRET"
+        ```
+      </Tab>
+      <Tab title="PowerShell">
+        ```powershell
+        # Use curl.exe, not the PowerShell curl alias (Invoke-WebRequest)
+        curl.exe -X POST https://intelliplan.tech/cron/notifications `
+                 -H "X-Cron-Token: $env:CRON_SECRET"
+        ```
+      </Tab>
+      <Tab title="Railway Cron">
+        In the Railway dashboard, add a cron service with the command above and the schedule expression `*/5 * * * *`.
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Verify the response">
+    A successful drain returns `200` with a JSON body showing how many notifications were processed. Common error responses:
+
+    | Status | Meaning |
+    |---|---|
+    | `401` | Secret is missing or wrong — the JSON body explains which |
+    | `503` | `CRON_SECRET` is not set on the server |
+
+    Both `401` and `503` mean the endpoint is working correctly — they are auth and config errors, not infrastructure failures.
+  </Step>
+</Steps>
+
+<Note>
+The sweep deduplicates on a `UNIQUE` constraint in the `notification_outbox` table and claims rows before sending them, so it is safe to call more often than every 5 minutes. Overlapping cron runs will not double-send.
+</Note>
+
+---
+
+## Other Cron-Guarded Endpoints
+
+`CRON_SECRET` also guards the reminder and lifecycle email endpoints. All three accept either header name and the query parameter fallback:
+
+| Endpoint | Purpose | Suggested Schedule |
+|---|---|---|
+| `POST /cron/notifications` | Drain the push notification outbox | Every 5 minutes |
+| `POST /cron/send-reminders` | Sweep for upcoming deadlines and enqueue reminder notifications | Every 15 minutes |
+| `POST /cron/lifecycle-emails` | Send welcome emails and feedback requests | Daily at 16:00 UTC |
+
+---
+
+## Notification Silencing
+
+Students can silence notifications from the IntelliPlan notification preferences panel. Silencing is stored per-channel (push, email, SMS) and per-event-kind, so a student can disable nudge reminders while keeping deadline alerts active. The preferences API (`/api/notifications/preferences`) is available to the frontend to read and write these settings.
+
+---
+
+## SMS Delivery via Carrier Gateway Email
+
+IntelliPlan does not use a third-party SMS API. Text messages are delivered by emailing the recipient's **carrier gateway address** — for example, `5551234567@tmomail.net` for T-Mobile. The student selects their carrier in Settings and IntelliPlan constructs the gateway address from their phone number.
+
+No additional configuration is required for SMS: whichever email path is already configured (Resend or SMTP) is reused to deliver the carrier gateway message. See [Email Configuration](/configuration/email) for email setup.
+
+<Info>
+Carrier gateway email is a best-effort channel — some carriers throttle or block gateway-addressed messages. It is offered as a convenience for students who cannot receive Web Push (e.g. iOS browsers), not as a guaranteed SMS delivery path.
+</Info>

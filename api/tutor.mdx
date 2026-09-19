@@ -1,0 +1,401 @@
+---
+title: "Plani Tutor and Chatbot API Endpoints"
+sidebarTitle: "Tutor"
+description: "Access the Plani AI tutor for multi-turn academic tutoring and the Plani assistant chatbot for IntelliPlan feature help via REST."
+---
+
+IntelliPlan ships two distinct AI conversational surfaces accessible via API: the **Plani Tutor** (`/api/tutor`), a deep academic tutor that teaches subjects step by step and never just hands over answers, and the **Plani assistant chatbot** (`/api/chatbot`), a lighter assistant scoped to helping students use IntelliPlan itself. The tutor is backed by a full adaptive student model — a persistent learning profile, per-topic mastery scores on a weighted moving average, tracked mistake patterns, durable learner memory, and modality routing (auditory / visual / reading / blended). The adaptive layer is exposed through a suite of sub-endpoints under `/api/tutor/adaptive/` that let you read and write the student model directly, enabling rich third-party learning applications.
+
+<Note>
+The tutor and chatbot endpoints use session-based authentication (Flask-Login cookie) in the web UI, but can also be called directly as authenticated users. The adaptive sub-endpoints are part of the main web app and require an active login session.
+</Note>
+
+---
+
+## POST /api/tutor — Main Tutor Endpoint
+
+The primary multi-turn tutoring endpoint. Submit a conversation history and receive a teaching reply from Plani. Plani never simply provides the answer; it asks follow-up questions, builds understanding incrementally, and adapts its explanation style and difficulty to the student's persistent profile.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/api/tutor \
+      -H "Content-Type: application/json" \
+      -d '{
+        "messages": [
+          {
+            "role": "user",
+            "content": "I dont understand how to find the derivative of x squared"
+          }
+        ],
+        "conversation_id": null
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "reply": "Great question! Before I show you the rule, let me ask: do you know what a derivative *means* conceptually? Like, what is it actually measuring about the function? 🤔",
+      "conversation_id": 391,
+      "remaining": 48,
+      "limit": 50
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Request Body
+
+<ParamField body="messages" type="array" required>
+  Array of conversation message objects. Each object must have a `role` field (`"user"` or `"assistant"`) and a `content` field (string). Pass the full conversation history for multi-turn context.
+</ParamField>
+
+<ParamField body="conversation_id" type="integer">
+  ID of an existing conversation to continue. When provided, the server merges the stored history with the incoming messages. Omit or pass `null` to start a new conversation.
+</ParamField>
+
+<ParamField body="modality_mode" type="string">
+  Override the student's stored modality for this turn. Accepted values: `"auto"`, `"auditory"`, `"visual"`, `"reading"`, `"blended"`. When omitted, the stored profile value is used.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="reply" type="string">
+  Plani's teaching response as a markdown-formatted string. May include interactive artifact markup when the student's modality supports it.
+</ResponseField>
+
+<ResponseField name="conversation_id" type="integer">
+  The ID of the conversation record. Pass this in subsequent requests to continue the same thread.
+</ResponseField>
+
+<ResponseField name="remaining" type="integer">
+  Free messages remaining in the student's monthly tutor quota (default: 50/month).
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Total monthly tutor message limit for this account.
+</ResponseField>
+
+<Warning>
+The tutor endpoint enforces a monthly message limit (default 50 messages/month for free accounts). When the limit is reached, the endpoint returns HTTP `429` with `"error": "limit_reached"`. Responses also pass through an AI safety firewall — messages that violate content guidelines receive a refusal reply rather than a teaching response.
+</Warning>
+
+---
+
+## GET /api/tutor/adaptive/profile — Get Learning Profile
+
+Retrieves the student's full adaptive learning profile, including grade level, subjects, goals, explanation style preferences, and the currently detected learning modality with its computed weights.
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/api/tutor/adaptive/profile
+```
+
+```json title="200 OK"
+{
+  "profile": {
+    "id": 7,
+    "grade_level": "11",
+    "subjects": ["AP Biology", "AP Calculus BC", "AP US History"],
+    "goals": "Get a 5 on AP Calc in May",
+    "explanation_style": "step-by-step",
+    "learning_modality": "visual"
+  },
+  "modality": {
+    "mode": "visual",
+    "weights": {
+      "auditory": 0.15,
+      "visual": 0.60,
+      "reading": 0.25
+    },
+    "labels": {
+      "auditory": "Auditory",
+      "visual": "Visual",
+      "reading": "Reading/Writing",
+      "blended": "Blended"
+    }
+  }
+}
+```
+
+<ResponseField name="profile" type="object">
+  The student's stored learning profile. Fields are sparse — only the properties that have been set will be present.
+</ResponseField>
+
+<ResponseField name="modality" type="object">
+  Current modality resolution including the stored mode, computed weight vector, and display labels for all modes.
+</ResponseField>
+
+---
+
+## POST /api/tutor/adaptive/profile — Update Learning Profile
+
+Updates the student's adaptive learning profile. Partial patches are allowed — only the fields you include are updated. Used during onboarding or when the student edits their profile from the tutor sidebar.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/tutor/adaptive/profile \
+  -H "Content-Type: application/json" \
+  -d '{
+    "grade_level": "11",
+    "subjects": ["AP Biology", "AP Calculus BC"],
+    "goals": "Score 90%+ on midterms",
+    "explanation_style": "analogies"
+  }'
+```
+
+```json title="200 OK"
+{
+  "profile": {
+    "id": 7,
+    "grade_level": "11",
+    "subjects": ["AP Biology", "AP Calculus BC"],
+    "goals": "Score 90%+ on midterms",
+    "explanation_style": "analogies"
+  }
+}
+```
+
+<ParamField body="grade_level" type="string">
+  Student's current grade level (e.g. `"11"`, `"12"`, `"freshman"`).
+</ParamField>
+
+<ParamField body="subjects" type="array">
+  List of subjects the student is studying.
+</ParamField>
+
+<ParamField body="goals" type="string">
+  The student's learning goals in free text.
+</ParamField>
+
+<ParamField body="explanation_style" type="string">
+  Preferred explanation style (e.g. `"step-by-step"`, `"analogies"`, `"concise"`).
+</ParamField>
+
+---
+
+## GET /api/tutor/adaptive/dashboard — Mastery Dashboard
+
+Returns the full adaptive learning dashboard: per-topic mastery scores, tracked mistake patterns, the durable learner memory summary, and AI-generated study recommendations. This is the data source for the tutor progress sidebar.
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/api/tutor/adaptive/dashboard
+```
+
+```json title="200 OK"
+{
+  "mastery": {
+    "AP Calculus BC / Derivatives": 0.72,
+    "AP Biology / Cell Division": 0.45,
+    "AP US History / Reconstruction": 0.88
+  },
+  "mistakes": [
+    {
+      "id": 14,
+      "topic": "AP Calculus BC / Chain Rule",
+      "description": "Confuses chain rule with product rule when functions are nested",
+      "frequency": 3,
+      "resolved": false
+    }
+  ],
+  "learner_memory": {
+    "summary": "Responds well to worked examples before abstract rules. Strong in history and reading comprehension; needs scaffolding for multi-step math. Prefers visual representations for calculus.",
+    "strengths": ["History analysis", "Reading comprehension"],
+    "friction_points": ["Multi-step calculus", "Lab report structure"]
+  },
+  "recommendations": [
+    "Review chain rule with visual function composition diagrams.",
+    "Practice spaced repetition on Cell Division flashcards — mastery is below 50%."
+  ]
+}
+```
+
+<ResponseField name="mastery" type="object">
+  Map of `"Subject / Topic"` keys to mastery scores between 0 and 1. Scores are computed on a weighted moving average (70% history, 30% newest evidence) with confidence that grows as attempts accumulate.
+</ResponseField>
+
+<ResponseField name="mistakes" type="array">
+  List of recurring misconceptions extracted from conversation transcripts. Each entry tracks frequency and resolved state.
+</ResponseField>
+
+<ResponseField name="learner_memory" type="object">
+  The LLM-built durable model of how this student learns — strengths, friction points, explanation patterns that land, and strategies the tutor should use.
+</ResponseField>
+
+<ResponseField name="recommendations" type="array">
+  AI-generated study recommendations based on current mastery state and tracked mistakes.
+</ResponseField>
+
+---
+
+## POST /api/tutor/adaptive/modality — Set Learning Modality
+
+Sets the student's learning modality mode. The modality governs how Plani frames explanations: auditory learners get spoken-optimized phrasing; visual learners get more diagrams and interactive artifacts; reading learners get structured text. `auto` lets the system detect the dominant modality from the student's behavior.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/tutor/adaptive/modality \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "visual"}'
+```
+
+<ParamField body="mode" type="string" required>
+  Learning modality. Accepted values: `"auto"`, `"auditory"`, `"visual"`, `"reading"`, `"blended"`.
+</ParamField>
+
+```json title="200 OK"
+{
+  "mode": "visual",
+  "weights": {
+    "auditory": 0.10,
+    "visual": 0.75,
+    "reading": 0.15
+  },
+  "active": ["visual"]
+}
+```
+
+---
+
+## POST /api/tutor/adaptive/summarize — Close a Conversation
+
+Closes an active tutor conversation by triggering a full session summary pipeline: it extracts a session summary (topics covered, what was understood, what was struggled with, and what to review next), identifies any new recurring mistake patterns, and updates the student's per-topic mastery scores. Call this when the student finishes a study session to persist the gains.
+
+```bash title="cURL — summarize by conversation ID"
+curl -X POST https://intelliplan.tech/api/tutor/adaptive/summarize \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id": 391}'
+```
+
+<ParamField body="conversation_id" type="integer">
+  ID of the conversation to summarize. When provided, the server loads the stored messages automatically.
+</ParamField>
+
+<ParamField body="messages" type="array">
+  Alternatively, supply the conversation messages directly as an array of `{role, content}` objects. Takes precedence over `conversation_id` if both are provided.
+</ParamField>
+
+```json title="200 OK"
+{
+  "summary": "Covered the power rule and chain rule for derivatives. Student understood the power rule quickly but confused chain rule with product rule twice. Recommend revisiting chain rule with composition examples.",
+  "mastery_updates": {
+    "AP Calculus BC / Power Rule": 0.80,
+    "AP Calculus BC / Chain Rule": 0.42
+  },
+  "new_mistakes": [
+    {
+      "topic": "AP Calculus BC / Chain Rule",
+      "description": "Confuses chain rule with product rule"
+    }
+  ]
+}
+```
+
+---
+
+## GET /api/tutor/adaptive/memory-imports — List Memory Imports
+
+Returns all learner memory exports that have been imported from other AI assistants (e.g. a ChatGPT conversation export). Each import contributes to the durable learner memory model.
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/api/tutor/adaptive/memory-imports
+```
+
+---
+
+## POST /api/tutor/adaptive/memory-imports — Import Memory
+
+Imports learner context exported from another AI assistant. The text is processed immediately — the adaptive engine blends modality signals from the import into the student's weight vector and rebuilds the durable learner memory so the import is felt on the very next tutor message.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/tutor/adaptive/memory-imports \
+  -H "Content-Type: application/json" \
+  -d '{
+    "raw_text": "This student has been studying AP Calculus. They struggle with related rates but are strong at integration by parts...",
+    "provider": "chatgpt",
+    "source_label": "ChatGPT memory export, Feb 2025"
+  }'
+```
+
+<ParamField body="raw_text" type="string" required>
+  The raw exported text from another AI assistant. Maximum 200,000 characters.
+</ParamField>
+
+<ParamField body="provider" type="string">
+  The AI provider the export came from (e.g. `"chatgpt"`, `"claude"`, `"gemini"`). Defaults to `"unknown"`.
+</ParamField>
+
+<ParamField body="source_label" type="string">
+  A human-readable label for this import (e.g. `"ChatGPT memory export, Feb 2025"`). Maximum 160 characters.
+</ParamField>
+
+---
+
+## POST /api/tutor/adaptive/mistakes/\{id\}/resolve — Resolve a Mistake
+
+Marks a specific tracked mistake as resolved. Use this when the student has demonstrably mastered the concept and the mistake no longer needs to be watched for in future sessions.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/tutor/adaptive/mistakes/14/resolve
+```
+
+```json title="200 OK"
+{
+  "ok": true
+}
+```
+
+Returns HTTP `404` if the mistake ID does not exist or does not belong to the current student.
+
+---
+
+## POST /api/chatbot — Plani Assistant
+
+A lighter-weight assistant scoped exclusively to helping students use IntelliPlan: explaining features, answering questions about study schedules, navigating settings, and similar in-app guidance. This endpoint does not teach academic subjects — use `POST /api/tutor` for that.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/chatbot \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "How do I connect my Canvas account?"
+      }
+    ]
+  }'
+```
+
+<ParamField body="messages" type="array" required>
+  Array of `{role, content}` message objects. The last 10 messages are used for context.
+</ParamField>
+
+```json title="200 OK"
+{
+  "reply": "To connect Canvas, head to **Settings → Integrations** and click **Connect Canvas**. You'll need your Canvas domain (e.g. `myschool.instructure.com`) and a personal access token from Canvas Account Settings → Approved Integrations. Once connected, your assignments will import automatically! 🎓"
+}
+```
+
+<ResponseField name="reply" type="string">
+  Plani's response as a markdown-formatted string. Maximum ~320 tokens.
+</ResponseField>
+
+<Tip>
+  The chatbot endpoint is appropriate for embedding a help assistant in a shell or sidebar UI. For academic tutoring, always use `POST /api/tutor` — the chatbot is not designed for multi-turn teaching and will redirect academic questions to Plani Tutor.
+</Tip>
+
+---
+
+## Adaptive Tutor Architecture Summary
+
+<CardGroup cols={2}>
+  <Card title="Learning Profile" icon="user">
+    Grade level, subjects, goals, and explanation preferences. Editable via the profile endpoints. Seeds every system prompt.
+  </Card>
+  <Card title="Subject Mastery" icon="chart-line">
+    Per-topic scores on a weighted moving average (70% history, 30% newest), with confidence that grows as attempts accumulate.
+  </Card>
+  <Card title="Mistake Patterns" icon="triangle-exclamation">
+    Recurring misconceptions extracted from transcripts. Plani watches for registered mistakes in every subsequent session.
+  </Card>
+  <Card title="Modality Routing" icon="sliders">
+    Auto-detects the dominant learning modality from behavior. Auditory, visual, reading/writing, and blended modes all change how Plani structures its responses.
+  </Card>
+</CardGroup>

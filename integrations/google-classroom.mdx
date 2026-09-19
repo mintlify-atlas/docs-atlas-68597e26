@@ -1,0 +1,115 @@
+---
+title: "Connect Google Classroom to IntelliPlan"
+sidebarTitle: "Google Classroom"
+description: "Import active courses and coursework from Google Classroom into IntelliPlan via Google OAuth 2.0 — a separate credential set from Google Calendar."
+---
+
+Google Classroom integration lets IntelliPlan pull your enrolled courses and all associated coursework directly from Google's education platform. The connection uses a standard Google OAuth 2.0 flow: you authorize once, and IntelliPlan's AI scheduler immediately gains access to your assignments and due dates without any manual data entry. Google Classroom uses a separate OAuth application credential from the Google Calendar integration — the two share Google's infrastructure but require independent client IDs so their permission scopes stay cleanly separated.
+
+## What Gets Imported
+
+When Google Classroom is connected, IntelliPlan imports:
+
+- **Active courses** — only courses with an `ACTIVE` enrollment state are fetched, keeping the dashboard free of archived or dropped classes
+- **Coursework** — all assignments published in each active course, including title, due date (when provided), and maximum grade
+- **Course names** — used for grouping in the Classes View and as context for AI priority scoring
+
+<Note>
+  Google Classroom does not guarantee that every assignment has a due date — teachers can publish coursework without one. Assignments without due dates appear on the dashboard without scheduling information and are excluded from the AI study schedule generator.
+</Note>
+
+## Environment Variables
+
+Add these to your `.env` file. These variables are distinct from `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, which are used exclusively for Google Calendar and login:
+
+```env title=".env"
+# Google Classroom OAuth — separate from Google Calendar credentials
+GOOGLE_CLASSROOM_CLIENT_ID=
+GOOGLE_CLASSROOM_CLIENT_SECRET=
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_CLASSROOM_CLIENT_ID` | Yes | OAuth 2.0 client ID from the Google Cloud Console |
+| `GOOGLE_CLASSROOM_CLIENT_SECRET` | Yes | OAuth 2.0 client secret for the same credential |
+
+## Setting Up Google Cloud OAuth Credentials
+
+<Steps>
+  <Step title="Open Google Cloud Console">
+    Go to [console.cloud.google.com](https://console.cloud.google.com) and select or create a project for IntelliPlan.
+  </Step>
+  <Step title="Enable the Google Classroom API">
+    Navigate to **APIs & Services → Library**, search for **Google Classroom API**, and click **Enable**.
+  </Step>
+  <Step title="Configure the OAuth consent screen">
+    Go to **APIs & Services → OAuth consent screen**. Choose **External** for user type. Fill in the app name (IntelliPlan), support email, and developer contact. Under **Scopes**, add:
+    ```
+    https://www.googleapis.com/auth/classroom.courses.readonly
+    https://www.googleapis.com/auth/classroom.coursework.me.readonly
+    ```
+  </Step>
+  <Step title="Create OAuth credentials">
+    Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+    - **Application type:** Web application
+    - **Authorized redirect URIs:** Add the URI where IntelliPlan handles the OAuth callback (e.g. `https://intelliplan.tech/oauth/classroom/callback` for production, `http://localhost:3000/oauth/classroom/callback` for local dev)
+  </Step>
+  <Step title="Copy credentials to .env">
+    Download the JSON or copy the **Client ID** and **Client Secret** from the credential detail view, then set `GOOGLE_CLASSROOM_CLIENT_ID` and `GOOGLE_CLASSROOM_CLIENT_SECRET` accordingly.
+  </Step>
+</Steps>
+
+## How the OAuth Flow Works
+
+When a student clicks **Connect Google Classroom**, IntelliPlan initiates a standard Google OAuth 2.0 authorization code flow:
+
+<Steps>
+  <Step title="Authorization redirect">
+    IntelliPlan redirects the student to Google's authorization endpoint with the Classroom read scopes, the `GOOGLE_CLASSROOM_CLIENT_ID`, and a `state` parameter for CSRF protection.
+  </Step>
+  <Step title="Student approves">
+    Google shows the student a consent screen listing what IntelliPlan is requesting (read-only access to courses and coursework). The student clicks **Allow**.
+  </Step>
+  <Step title="Code exchange">
+    Google redirects back to IntelliPlan's OAuth callback with a `code`. IntelliPlan exchanges this code at Google's token endpoint for an access token and refresh token.
+  </Step>
+  <Step title="Token storage">
+    Tokens are encrypted and stored in the database. On subsequent requests, IntelliPlan refreshes the access token automatically when it nears expiry.
+  </Step>
+</Steps>
+
+## Connection Management
+
+Check the current connection status at any time:
+
+```http
+GET /api/lms/status/google_classroom
+```
+
+To trigger a manual sync of Classroom data:
+
+```http
+POST /api/lms/google_classroom/sync
+```
+
+To disconnect Google Classroom:
+
+```http
+POST /api/lms/disconnect/google_classroom
+```
+
+Or from the **Settings → Integrations** page inside IntelliPlan.
+
+## Troubleshooting
+
+<Accordion title="No courses appear after connecting">
+  Google Classroom only surfaces courses where the student has an **ACTIVE** enrollment. Courses that are archived, declined, or invited-but-not-accepted will not appear. Confirm the Google account used to authorize is the same one enrolled in the courses.
+</Accordion>
+
+<Accordion title="The OAuth callback returns 'redirect_uri_mismatch'">
+  The redirect URI registered in Google Cloud Console must match the one IntelliPlan sends exactly — including scheme, host, port, and path. Check that the URI in **APIs & Services → Credentials** matches the path your IntelliPlan deployment actually handles.
+</Accordion>
+
+<Accordion title="Google Classroom appears separate from my Google Calendar connection">
+  This is by design. IntelliPlan uses `GOOGLE_CLASSROOM_CLIENT_ID` / `GOOGLE_CLASSROOM_CLIENT_SECRET` for Classroom and `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` for Calendar and login. Keeping them separate lets each credential carry only the scopes it needs, reducing the permission surface shown to students on the consent screen.
+</Accordion>

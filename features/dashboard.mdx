@@ -1,0 +1,165 @@
+---
+title: "Dashboard: Kanban Board for Your Assignments"
+sidebarTitle: "Dashboard"
+description: "IntelliPlan's Dashboard gives you a live, three-column kanban view of every assignment — Overdue, Today, and Upcoming — sorted by AI priority scoring."
+---
+
+The Dashboard is the command center of IntelliPlan. The moment you sign in, every assignment pulled from your connected school platform lands in one of three columns — **Overdue**, **Today**, and **Upcoming** — ranked by AI priority scoring so the most pressing work is always at the top. You can create manual tasks alongside platform-imported ones, mark anything complete with a single click, and dismiss or restore assignments at will. Full dark mode support means the board looks great day or night.
+
+## Board Layout
+
+The kanban board organises all your work into three columns based on due date, recalculated each time you open the app:
+
+<CardGroup cols={3}>
+  <Card title="Overdue" icon="circle-exclamation">
+    Assignments past their due date that have not been completed or dismissed. Sorted by priority score, highest first.
+  </Card>
+  <Card title="Today" icon="calendar-day">
+    Everything due today. Sorted by priority so you tackle the highest-impact work first.
+  </Card>
+  <Card title="Upcoming" icon="calendar-clock">
+    Future assignments sorted by proximity and priority. Gives you a preview of what's coming so you can start planning ahead.
+  </Card>
+</CardGroup>
+
+## Auto-Import from Connected Platforms
+
+IntelliPlan pulls assignments directly from every school platform you connect. There is nothing to paste or type — as soon as an assignment appears on your LMS, it appears on your board.
+
+<CardGroup cols={2}>
+  <Card title="Canvas LMS" icon="graduation-cap">
+    Assignments, due dates, points possible, and course names via the Canvas REST API.
+  </Card>
+  <Card title="Google Classroom" icon="google">
+    Active courses and coursework via Google OAuth.
+  </Card>
+  <Card title="StudentVue" icon="school">
+    Assignments and missing work via the StudentVue API.
+  </Card>
+  <Card title="Schoology" icon="book">
+    Assignments via API key and secret.
+  </Card>
+  <Card title="Blackboard Learn" icon="chalkboard">
+    Gradebook due dates via OAuth 2.0 (3LO).
+  </Card>
+  <Card title="Moodle" icon="puzzle-piece">
+    Assignments and events via a web-services token.
+  </Card>
+</CardGroup>
+
+<Tip>
+  You can connect multiple platforms at the same time. IntelliPlan merges assignments from all of them into a single unified board so nothing falls through the cracks.
+</Tip>
+
+## Priority Scoring
+
+Every assignment on the board carries a **High**, **Medium**, or **Low** priority badge. The score is computed from three factors:
+
+<AccordionGroup>
+  <Accordion title="Points possible">
+    Assignments worth more points have a larger impact on your course grade, so they receive a higher priority weight.
+  </Accordion>
+  <Accordion title="Due date proximity">
+    The closer an assignment's deadline, the more its priority climbs. An assignment due tomorrow scores higher than an identical one due next week.
+  </Accordion>
+  <Accordion title="Course weight">
+    Courses that count for more in your GPA contribute more to a task's priority score, so you spend energy where it matters most.
+  </Accordion>
+</AccordionGroup>
+
+## Manual Tasks
+
+Not everything shows up on an LMS. You can add your own tasks directly from the Dashboard — study sessions, personal deadlines, extracurricular prep — and they sit right alongside your imported assignments.
+
+<Steps>
+  <Step title="Open the task creator">
+    Click the **+ Add Task** button in the top-right corner of the board.
+  </Step>
+  <Step title="Fill in the details">
+    Enter a title, due date, estimated duration, and optional course name. Choose a priority level manually or let IntelliPlan suggest one.
+  </Step>
+  <Step title="Save">
+    Click **Create**. The task appears in the correct column immediately.
+  </Step>
+</Steps>
+
+The manual task API endpoints used under the hood:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/tasks/manual/create` | POST | Create a new manual task |
+| `/tasks/manual/update` | POST | Edit an existing manual task |
+| `/tasks/manual/delete` | POST | Remove a manual task |
+
+## Completing and Restoring Assignments
+
+Marking an assignment complete removes it from the active board. If you dismissed something by accident — or if a deadline was pushed back — you can restore it just as easily.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/dismiss` | POST | Mark an assignment as complete / dismiss it |
+| `/restore` | POST | Restore a previously dismissed assignment |
+
+<Note>
+  Completing a task also counts as a **qualifying action** for the streak system. Each task you check off keeps your streak alive for the day.
+</Note>
+
+## Streak System
+
+<Info>
+  The streak system is an optional experiment behind the `streak_v1` feature flag. It is **off by default** in production.
+</Info>
+
+IntelliPlan includes a Duolingo-style task-completion streak that rewards consistent daily progress. Two actions qualify: **completing a task** and **reviewing your dashboard** (plan review). Streaks are tracked in your local timezone — not UTC — so they are never broken by time zone accidents.
+
+<AccordionGroup>
+  <Accordion title="Streak freezes">
+    You start with **2 streak freezes** (maximum of 3). One freeze covers one missed day automatically. You earn a new freeze at every 7-day milestone.
+  </Accordion>
+  <Accordion title="Enabling streak_v1">
+    Set the feature flag directly:
+    ```sql title="Enable via database"
+    UPDATE feature_flags
+    SET enabled = true, rollout_percentage = 100
+    WHERE key = 'streak_v1';
+    ```
+    Or via environment variable before starting the app:
+    ```bash title=".env"
+    STREAK_V1_ENABLED=1
+    ```
+  </Accordion>
+  <Accordion title="Streak API endpoints">
+    | Endpoint | Method | Description |
+    |---|---|---|
+    | `/api/streak/status` | GET | Current streak, week dots, nudge eligibility |
+    | `/api/streak/plan-review` | POST | Record a dashboard view as a qualifying action |
+    | `/api/streak/set-timezone` | POST | Persist the user's IANA timezone |
+    | `/api/streak/nudge-shown` | POST | Mark today's nudge as shown |
+    | `/api/streak/nudge-tapped` | POST | Track nudge tap |
+    | `/api/streak/pill-tapped` | POST | Track streak pill tap |
+  </Accordion>
+</AccordionGroup>
+
+The streak engine lives in `streak_engine.py` and has zero Flask or database dependencies — all logic is pure Python, making it fully unit-testable in isolation.
+
+```bash title="Run streak unit tests"
+# Pure logic tests — no DB required
+pytest test_streak_engine.py -v
+
+# End-to-end tests with Flask test client + SQLite in-memory
+pytest test_streak_e2e.py -v
+```
+
+## Dark Mode
+
+IntelliPlan fully supports light and dark themes. Your preference is saved across sessions, so the app always opens in the mode you last chose. Toggle between themes from the navigation bar at any time.
+
+## Live Data Refresh
+
+The Dashboard always shows live data. Click **Refresh** or navigate away and back to re-fetch your assignments from connected platforms. The `/tasks/unified` endpoint merges assignments from all sources — platform imports, manual tasks, and Notion syncs — into one sorted list.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/live` | GET | Fetch live assignments from the connected platform |
+| `/tasks/unified` | GET | All tasks merged (platform + manual + Notion) |
+| `/missing/data` | GET | Missing and overdue assignments |

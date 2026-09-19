@@ -1,0 +1,341 @@
+---
+title: "IntelliPlan MCP Server for Claude and Cursor"
+sidebarTitle: "MCP Server"
+description: "Connect IntelliPlan to Claude Desktop, Cursor, or Claude Code via the Model Context Protocol to query and manage student data from inside your AI client."
+---
+
+The IntelliPlan MCP server (`intelliplan_mcp.py`) wraps the public IntelliPlan REST API in the [Model Context Protocol](https://modelcontextprotocol.io), making every IntelliPlan capability available as a native tool inside any MCP-aware AI client. Once wired in, Claude Desktop can look up your assignments and build a personalised study schedule without leaving the chat window; Cursor can check your streak while you code; Claude Code can create tasks directly from a conversation. The server is a thin async layer — it holds no state of its own, translates tool calls into authenticated HTTP requests, and streams the JSON responses back to the client.
+
+---
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Python Dependencies">
+    The MCP server requires two packages. Install them into whichever Python environment your MCP client will use to launch the server:
+
+    ```bash
+    pip install mcp httpx
+    ```
+
+    If either package is missing when the server starts, it prints a clear error to stderr and exits rather than silently failing mid-session.
+  </Step>
+  <Step title="Get an API Token">
+    The MCP server authenticates as **you** using an `Authorization: Bearer` token — not an API key. This is a first-party token tied to your IntelliPlan credentials, which gives it full scope access without the application-review process required for third-party keys.
+
+    Exchange your email and password for a token at the auth endpoint:
+
+    ```bash title="POST /api/v1/auth/token"
+    curl -X POST https://intelliplan.tech/api/v1/auth/token \
+      -H "Content-Type: application/json" \
+      -d '{"email": "you@example.com", "password": "your-password"}'
+    ```
+
+    The response contains a `token` field. Copy that value — you will set it as an environment variable in the next step.
+
+    <Warning>
+      Bearer tokens carry every scope and cannot be revoked individually (without rotating the server's signing secret). Treat your token like a password. If you share your IntelliPlan data with a third-party app, use a scoped [API key](/api/api-keys) instead.
+    </Warning>
+  </Step>
+  <Step title="Set Environment Variables">
+    Export the two required environment variables before starting your MCP client:
+
+    ```bash
+    export INTELLIPLAN_API_BASE="https://intelliplan.tech"
+    export INTELLIPLAN_API_TOKEN="<paste-token-here>"
+    ```
+
+    `INTELLIPLAN_API_BASE` defaults to `https://intelliplan.tech` if unset, so you only need to override it when pointing at a local development server.
+  </Step>
+</Steps>
+
+---
+
+## Configuring Claude Desktop
+
+Add the following block to your Claude Desktop configuration file. On macOS the config lives at `~/Library/Application Support/Claude/claude_desktop_config.json`; on Windows at `%APPDATA%\Claude\claude_desktop_config.json`.
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "intelliplan": {
+      "command": "python",
+      "args": ["intelliplan_mcp.py"],
+      "env": {
+        "INTELLIPLAN_API_BASE": "https://intelliplan.tech",
+        "INTELLIPLAN_API_TOKEN": "<paste-token>"
+      }
+    }
+  }
+}
+```
+
+<Note>
+  Make sure the `intelliplan_mcp.py` path in `args` is either absolute or relative to a working directory that Claude Desktop resolves correctly. An absolute path (e.g. `/Users/you/intelliplan/intelliplan_mcp.py`) is the safest choice.
+</Note>
+
+After saving the config, **restart Claude Desktop**. You should see an IntelliPlan tool icon in the chat composer. Ask Claude something like:
+
+> *"What assignments do I have due this week?"*
+
+Claude will call `list_assignments` automatically and present the results inline.
+
+---
+
+## Configuring Cursor
+
+In Cursor, open **Settings → MCP** and add a new server entry using the same structure:
+
+```json title="Cursor MCP Settings"
+{
+  "intelliplan": {
+    "command": "python",
+    "args": ["/absolute/path/to/intelliplan_mcp.py"],
+    "env": {
+      "INTELLIPLAN_API_BASE": "https://intelliplan.tech",
+      "INTELLIPLAN_API_TOKEN": "<paste-token>"
+    }
+  }
+}
+```
+
+---
+
+## Running Standalone
+
+You can also run the server directly to verify connectivity before wiring it into a client:
+
+```bash
+python intelliplan_mcp.py
+```
+
+The server starts over stdio and waits for MCP protocol messages. If `INTELLIPLAN_API_TOKEN` is not set, a warning is printed to stderr but the process does not exit — tools will return `401` responses until the variable is set.
+
+---
+
+## Available Tools
+
+All tools are exposed as `async` functions via `FastMCP`. Each one performs a single authenticated HTTP request against `https://intelliplan.tech/api/v1/` and returns the raw JSON response as a formatted string.
+
+<CardGroup cols={2}>
+  <Card title="list_assignments" icon="list-check">
+    Returns every assignment IntelliPlan knows about for the authenticated student — Canvas, StudentVue, Schoology, Notion, and manual tasks. Each item includes `title`, `course`, `due_date`, `priority`, `estimated_time`, and `source`.
+  </Card>
+  <Card title="create_task" icon="circle-plus">
+    Creates a manual task or homework item. Accepts `title` (required), `due_date` (ISO `YYYY-MM-DD`), `priority` (`High` / `Medium` / `Low`), `course`, `estimated_time` (minutes, default 60), and `notes`.
+  </Card>
+  <Card title="dismiss_assignment" icon="check">
+    Marks an assignment as done by `title`. The assignment is hidden from the active list but can be restored.
+  </Card>
+  <Card title="restore_assignment" icon="rotate-left">
+    Un-dismisses a previously dismissed assignment, returning it to the active assignment list.
+  </Card>
+  <Card title="list_tests" icon="graduation-cap">
+    Returns every assignment the student has flagged as a test, for focused exam-mode views.
+  </Card>
+  <Card title="mark_as_test" icon="flag">
+    Flags an assignment as a test by `title`. Optionally accepts `course` and `due_date` to disambiguate when multiple assignments share the same name.
+  </Card>
+  <Card title="unmark_test" icon="flag-swallowtail">
+    Removes the test flag from an assignment identified by `title`.
+  </Card>
+  <Card title="generate_schedule" icon="calendar-days">
+    Runs IntelliPlan's AI scheduler to produce a personalised study plan. Accepts `hours_per_day` (default `2.0`), `preferred_time` (`morning` / `afternoon` / `evening`), and `custom_tasks` (extra topics to schedule beyond known assignments).
+  </Card>
+  <Card title="get_streak" icon="fire">
+    Returns the student's current streak day count, sparks balance, level, longest streak, and weekly quest progress.
+  </Card>
+  <Card title="get_profile" icon="user">
+    Returns the student's learning profile: grade level, focus areas, goals, and availability.
+  </Card>
+  <Card title="update_profile" icon="user-pen">
+    Updates any combination of `grade_level`, `focus_areas` (list), `goals`, and `weekly_commitments`. Only fields you pass are changed.
+  </Card>
+</CardGroup>
+
+---
+
+## Tool Reference
+
+<Accordion title="list_assignments">
+  **HTTP:** `GET /api/v1/assignments`
+
+  No parameters. Returns the full unified assignment list across all connected sources.
+
+  ```json title="Example Response (truncated)"
+  [
+    {
+      "title": "Chapter 5 Reading",
+      "course": "AP History",
+      "due_date": "2025-09-12",
+      "priority": "High",
+      "estimated_time": 45,
+      "source": "Canvas"
+    }
+  ]
+  ```
+</Accordion>
+
+<Accordion title="create_task">
+  **HTTP:** `POST /api/v1/tasks`
+
+  <ParamField body="title" type="string" required>
+    What needs to get done.
+  </ParamField>
+  <ParamField body="due_date" type="string">
+    ISO date string (`YYYY-MM-DD`), or omit for no due date.
+  </ParamField>
+  <ParamField body="priority" type="string" default="Medium">
+    `High`, `Medium`, or `Low`.
+  </ParamField>
+  <ParamField body="course" type="string" default="Personal">
+    Course or category name.
+  </ParamField>
+  <ParamField body="estimated_time" type="integer" default="60">
+    Estimated time in minutes.
+  </ParamField>
+  <ParamField body="notes" type="string">
+    Free-form notes attached to the task.
+  </ParamField>
+</Accordion>
+
+<Accordion title="dismiss_assignment / restore_assignment">
+  **HTTP:** `POST /api/v1/assignments/dismiss` and `POST /api/v1/assignments/restore`
+
+  <ParamField body="title" type="string" required>
+    The exact title of the assignment to dismiss or restore.
+  </ParamField>
+</Accordion>
+
+<Accordion title="list_tests">
+  **HTTP:** `GET /api/v1/tests`
+
+  No parameters. Returns all assignments flagged as tests.
+</Accordion>
+
+<Accordion title="mark_as_test / unmark_test">
+  **HTTP:** `POST /api/v1/tests` and `DELETE /api/v1/tests`
+
+  <ParamField body="title" type="string" required>
+    The assignment title to flag or unflag.
+  </ParamField>
+  <ParamField body="course" type="string">
+    Optional course name to disambiguate.
+  </ParamField>
+  <ParamField body="due_date" type="string">
+    Optional ISO date to disambiguate.
+  </ParamField>
+</Accordion>
+
+<Accordion title="generate_schedule">
+  **HTTP:** `POST /api/v1/schedule/generate`
+
+  <ParamField body="hours_per_day" type="number" default="2.0">
+    Target study hours per day.
+  </ParamField>
+  <ParamField body="preferred_time" type="string" default="evening">
+    Preferred study block: `morning`, `afternoon`, or `evening`.
+  </ParamField>
+  <ParamField body="custom_tasks" type="array">
+    List of extra topic strings to schedule in addition to known assignments.
+  </ParamField>
+</Accordion>
+
+<Accordion title="get_streak">
+  **HTTP:** `GET /api/v1/streak`
+
+  No parameters. Returns `streak_days`, `sparks`, `level`, `longest_streak`, and weekly quest progress fields.
+</Accordion>
+
+<Accordion title="get_profile / update_profile">
+  **HTTP:** `GET /api/v1/identity` and `PATCH /api/v1/identity`
+
+  `update_profile` accepts any combination of the following fields; omitted fields are left unchanged:
+
+  <ParamField body="grade_level" type="string">
+    e.g. `"11th grade"`
+  </ParamField>
+  <ParamField body="focus_areas" type="array">
+    e.g. `["Math", "Physics", "Test prep (SAT / ACT / AP)"]`
+  </ParamField>
+  <ParamField body="goals" type="string">
+    Free-text learning goals.
+  </ParamField>
+  <ParamField body="weekly_commitments" type="string">
+    Free-text description of extracurriculars, sports, or other recurring commitments.
+  </ParamField>
+</Accordion>
+
+---
+
+## Example Conversations
+
+<Tabs>
+  <Tab title="Study Schedule">
+    Ask Claude to build a schedule using your actual assignments:
+
+    > *"I have 2 hours free each evening this week. Build me a study plan."*
+
+    Claude will call `list_assignments` to fetch what's due, then `generate_schedule` with `hours_per_day: 2.0` and `preferred_time: "evening"`, and present the resulting plan as a formatted table.
+  </Tab>
+  <Tab title="Quick Task Creation">
+    Create tasks without opening the IntelliPlan app:
+
+    > *"Add a task: reread chapters 3–5 for AP Bio, due Friday, high priority, about 90 minutes."*
+
+    Claude calls `create_task` with `title: "Reread chapters 3–5 for AP Bio"`, the correct `due_date`, `priority: "High"`, `course: "AP Bio"`, and `estimated_time: 90`.
+  </Tab>
+  <Tab title="Streak Check">
+    > *"What's my current streak and how many sparks do I have?"*
+
+    Claude calls `get_streak` and formats the response conversationally, including level and weekly quest progress.
+  </Tab>
+  <Tab title="Profile Update">
+    > *"Update my focus areas to include AP Chemistry and SAT prep."*
+
+    Claude calls `get_profile` first to see existing focus areas, then calls `update_profile` with the merged `focus_areas` list, confirming the change.
+  </Tab>
+</Tabs>
+
+---
+
+## Troubleshooting
+
+<Accordion title="401 Unauthorized on every tool call">
+  `INTELLIPLAN_API_TOKEN` is not set or has expired. Re-run the token exchange:
+
+  ```bash
+  curl -X POST https://intelliplan.tech/api/v1/auth/token \
+    -H "Content-Type: application/json" \
+    -d '{"email": "you@example.com", "password": "your-password"}'
+  ```
+
+  Copy the returned `token` value and update the `env` block in your Claude Desktop or Cursor config, then restart the client.
+</Accordion>
+
+<Accordion title="Server not appearing in Claude Desktop">
+  - Confirm the `intelliplan_mcp.py` path in `args` is absolute and the file exists.
+  - Confirm `python` resolves to the environment where `mcp` and `httpx` are installed. Use the full path to the interpreter if needed (e.g. `/usr/local/bin/python3`).
+  - Check Claude Desktop logs for stderr output from the server startup.
+</Accordion>
+
+<Accordion title="ImportError: No module named 'mcp'">
+  The `mcp` package is not installed in the Python environment Claude Desktop is using to launch the server.
+
+  ```bash
+  # Install into the correct environment
+  pip install "mcp[cli]" httpx
+  ```
+
+  If you manage multiple environments, use the full path to `pip`: `/path/to/venv/bin/pip install "mcp[cli]" httpx`.
+</Accordion>
+
+<Accordion title="Connecting to a local IntelliPlan instance">
+  Set `INTELLIPLAN_API_BASE` to your local server address:
+
+  ```bash
+  export INTELLIPLAN_API_BASE="http://localhost:5000"
+  ```
+
+  The server strips trailing slashes from `INTELLIPLAN_API_BASE` automatically, so `http://localhost:5000/` works too.
+</Accordion>

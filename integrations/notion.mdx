@@ -1,0 +1,136 @@
+---
+title: "Sync Tasks with Notion via Two-Way Integration"
+sidebarTitle: "Notion"
+description: "Connect IntelliPlan to Notion via public integration OAuth for two-way task sync — assignments flow into Notion databases and updates sync back automatically."
+---
+
+IntelliPlan's Notion integration enables two-way synchronization between your IntelliPlan task list and one or more Notion databases. Assignments imported from your school platform appear as pages in your Notion workspace, and tasks you create or update in Notion are reflected back in IntelliPlan. The connection uses Notion's public integration OAuth flow — students authorize once by connecting through Notion's standard permission screen, and the integration handles token refresh automatically. No Notion API key needs to be shared manually; the OAuth flow generates and stores credentials on the student's behalf.
+
+## What Gets Synced
+
+The two-way sync covers:
+
+- **IntelliPlan → Notion:** assignments imported from connected LMS platforms (Canvas, Classroom, StudentVue, Schoology, Blackboard, Moodle) and manual tasks are written to your selected Notion database as pages
+- **Notion → IntelliPlan:** tasks created or modified in the linked Notion database are fetched back and merged into the IntelliPlan unified task list
+- **Completion status:** marking a task done in either IntelliPlan or Notion propagates the status to the other side
+- **Unified view:** the `/tasks/unified` endpoint always includes Notion tasks alongside platform assignments, so the dashboard and AI scheduler work from a complete picture
+
+## Environment Variables
+
+```env title=".env"
+# Notion OAuth — public connection
+NOTION_CLIENT_ID=
+NOTION_CLIENT_SECRET=
+NOTION_REDIRECT_URI=https://intelliplan.tech/oauth/notion/callback
+# Optional — version header for OAuth token endpoints only
+# NOTION_API_VERSION=2026-03-11
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `NOTION_CLIENT_ID` | Yes | OAuth client ID from the Notion integrations dashboard |
+| `NOTION_CLIENT_SECRET` | Yes | OAuth client secret from the same page |
+| `NOTION_REDIRECT_URI` | Yes | Must match the redirect URI registered in Notion's OAuth configuration exactly |
+| `NOTION_API_VERSION` | No | Version header sent to Notion's OAuth token endpoints. Defaults to `2026-03-11`. Does not affect data-plane calls, which are versioned separately by the `notion-client` SDK |
+
+<Warning>
+  The `NOTION_REDIRECT_URI` must match the value registered in your Notion public connection's OAuth configuration byte-for-byte. Notion rejects the token exchange with an `invalid_redirect_uri` error if they differ by even a trailing slash. For local development, add a second redirect URI (e.g. `http://localhost:5000/oauth/notion/callback`) in the Notion dashboard and set `NOTION_REDIRECT_URI` to that value in your local `.env`.
+</Warning>
+
+## Setting Up a Notion Public Connection
+
+<Steps>
+  <Step title="Open the Notion connections dashboard">
+    Go to [app.notion.com/developers/connections](https://app.notion.com/developers/connections) and sign in with your Notion account.
+  </Step>
+  <Step title="Create a new public connection">
+    Click **New connection** and select **Public connection** (not Internal). Public connections support OAuth for third-party users and are required for IntelliPlan's per-student authorization flow.
+  </Step>
+  <Step title="Fill in the connection details">
+    - **Name:** IntelliPlan
+    - **Website:** `https://intelliplan.tech`
+    - **Redirect URI:** `https://intelliplan.tech/oauth/notion/callback`
+    - Add a second redirect URI for local development if needed: `http://localhost:5000/oauth/notion/callback`
+  </Step>
+  <Step title="Copy credentials">
+    After saving, Notion shows an **OAuth client ID** and **OAuth client secret**. Copy these to `NOTION_CLIENT_ID` and `NOTION_CLIENT_SECRET` in your `.env`.
+  </Step>
+</Steps>
+
+## OAuth Authorization Flow
+
+Notion's OAuth flow for public connections does not support PKCE — only a `state` parameter is used for CSRF protection. IntelliPlan stores the `state` value in the session and verifies it when the callback arrives.
+
+<Steps>
+  <Step title="Build the authorization URL">
+    IntelliPlan constructs the Notion authorization URL with the following parameters:
+    ```python
+    params = {
+        "client_id": os.getenv("NOTION_CLIENT_ID"),
+        "redirect_uri": notion_redirect_uri,
+        "response_type": "code",
+        "owner": "user",
+        "state": state,
+    }
+    url = f"https://api.notion.com/v1/oauth/authorize?{urllib.parse.urlencode(params)}"
+    ```
+  </Step>
+  <Step title="Student authorizes">
+    Notion shows the student a permission screen listing the pages and databases IntelliPlan will have access to. The student selects which databases to share and clicks **Allow access**.
+  </Step>
+  <Step title="Code exchange">
+    Notion redirects to `NOTION_REDIRECT_URI` with a `code` and `state`. IntelliPlan exchanges the code at Notion's token endpoint using HTTP Basic authentication with `NOTION_CLIENT_ID:NOTION_CLIENT_SECRET` as credentials:
+    ```
+    POST https://api.notion.com/v1/oauth/token
+    Authorization: Basic <base64(client_id:client_secret)>
+    ```
+  </Step>
+  <Step title="Token storage">
+    The access token (and refresh token, if provided) are stored encrypted in the database. IntelliPlan uses the token for all subsequent Notion API calls through the `notion-client` SDK.
+  </Step>
+</Steps>
+
+## API Endpoints
+
+### Connect Notion
+
+```http
+POST /notion/connect
+Content-Type: application/json
+
+{
+  "code": "<authorization_code>",
+  "state": "<state>"
+}
+```
+
+Initiates or completes the Notion OAuth connection for the current user. In practice this is called automatically by IntelliPlan's OAuth callback handler, not by students directly.
+
+### Fetch Notion Tasks
+
+```http
+GET /notion/tasks
+```
+
+Returns all tasks from the connected Notion database in IntelliPlan's normalized assignment format. These are also included automatically in the `/tasks/unified` response.
+
+## API Version Notes
+
+IntelliPlan uses two separate versioning surfaces for Notion:
+
+- **OAuth token endpoints** (`/v1/oauth/authorize`, `/v1/oauth/token`): use the `NOTION_API_VERSION` env var, defaulting to `2026-03-11`. These endpoints are stable across versions.
+- **Data-plane calls** (databases, pages, queries): versioned independently by the `notion-client` Python SDK. IntelliPlan does not override the SDK's pinned version to avoid silently changing response shapes. Notion's 2025-09-03 release, for example, moved database queries to data sources — bumping both versions simultaneously would change request and response shapes at once.
+
+## Troubleshooting
+
+<Accordion title="'invalid_redirect_uri' at token exchange">
+  The redirect URI sent during authorization must exactly match one of the URIs registered in the Notion connection dashboard. Check for trailing slashes, `http` vs `https`, port numbers, and path casing. Update `NOTION_REDIRECT_URI` in `.env` and the Notion dashboard registration to match.
+</Accordion>
+
+<Accordion title="No databases appear after connecting">
+  During the Notion authorization flow, the student must explicitly select which pages or databases to share with IntelliPlan. If they clicked through without selecting any, the connection exists but IntelliPlan has no access to content. Disconnect and reconnect from **Settings → Integrations → Notion** to go through the selection step again.
+</Accordion>
+
+<Accordion title="Tasks sync in one direction only">
+  Two-way sync requires that the connected Notion database has the expected property schema (title, due date, status). If the Notion database was created manually rather than through IntelliPlan's setup flow, some properties may be missing or named differently. Check that the database has at minimum a `Name` title property, a `Date` property for due dates, and a `Status` checkbox or select property.
+</Accordion>

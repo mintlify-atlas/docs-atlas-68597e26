@@ -1,0 +1,344 @@
+---
+title: "Assignments and Tasks API Endpoints"
+sidebarTitle: "Assignments"
+description: "Manage assignments, manual tasks, dismissals, and test flags via IntelliPlan's unified task API. Requires read:assignments or write:tasks scopes."
+---
+
+The Assignments & Tasks API is the primary interface for reading and mutating everything on a student's to-do list. Assignments are pulled live from all connected school platforms (Canvas, Google Classroom, StudentVue, Schoology, Blackboard, Moodle) and merged with manual tasks and Notion syncs into a single unified feed. Two distinct endpoints exist for good reason: `GET /api/v1/assignments` returns only the live platform feed (what the school reports), while `GET /api/v1/tasks` returns the full merged view including manual tasks — so tools that only care about school deadlines and tools that show everything can each get exactly what they need.
+
+<Note>
+All endpoints under `/api/v1/` require authentication. Send your API key as `X-API-Key: ip_live_…` in the request header. Apply for a key at [intelliplan.tech/developers](https://intelliplan.tech/developers). See [Authentication](/api/authentication) for full details.
+</Note>
+
+---
+
+## GET /api/v1/assignments
+
+Returns the unified assignment list sourced from all connected school platforms. This proxies the `/live` internal feed — the same data the dashboard renders. Manual tasks and Notion tasks are **not** included here; use `GET /api/v1/tasks` for the fully merged view.
+
+**Required scope:** `read:assignments`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X GET https://intelliplan.tech/api/v1/assignments \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "assignments": [
+        {
+          "title": "Chapter 5 Reading Quiz",
+          "course": "AP Biology",
+          "due_date": "2025-02-14",
+          "points_possible": 20,
+          "priority": "High",
+          "source": "canvas"
+        },
+        {
+          "title": "Lab Report Draft",
+          "course": "Chemistry",
+          "due_date": "2025-02-17",
+          "points_possible": 50,
+          "priority": "Medium",
+          "source": "google_classroom"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<ResponseField name="assignments" type="array">
+  Array of assignment objects from all connected school platforms.
+
+  <Expandable title="Assignment object fields">
+    <ResponseField name="title" type="string">
+      Assignment name as it appears in the connected LMS.
+    </ResponseField>
+    <ResponseField name="course" type="string">
+      Course or class name.
+    </ResponseField>
+    <ResponseField name="due_date" type="string">
+      ISO 8601 due date string (e.g. `"2025-02-14"`).
+    </ResponseField>
+    <ResponseField name="points_possible" type="number">
+      Maximum points for the assignment. May be `null` if the LMS does not provide a value.
+    </ResponseField>
+    <ResponseField name="priority" type="string">
+      AI-computed priority level: `"High"`, `"Medium"`, or `"Low"`.
+    </ResponseField>
+    <ResponseField name="source" type="string">
+      The connected platform this assignment came from (e.g. `"canvas"`, `"google_classroom"`, `"studentvue"`, `"moodle"`, `"blackboard"`, `"schoology"`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## POST /api/v1/tasks — Create a Manual Task
+
+Creates a new manual task owned by the authenticated user. Manual tasks appear on the dashboard alongside school platform assignments and can be synced to Notion if a Notion integration is configured.
+
+**Required scope:** `write:tasks`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/api/v1/tasks \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "title": "Review flashcards for midterm",
+        "due_date": "2025-02-20",
+        "priority": "High",
+        "course": "AP Biology",
+        "estimated_time": 90,
+        "notes": "Focus on cell cycle and mitosis sections"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="201 Created"
+    {
+      "status": "ok",
+      "task": {
+        "id": 4821,
+        "title": "Review flashcards for midterm",
+        "due_date": "2025-02-20",
+        "priority": "High",
+        "course": "AP Biology",
+        "estimated_time": 90,
+        "notes": "Focus on cell cycle and mitosis sections",
+        "source": "manual"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Request Body
+
+<ParamField body="title" type="string" required>
+  The task title. Must be a non-empty string.
+</ParamField>
+
+<ParamField body="due_date" type="string">
+  Due date in ISO 8601 format (e.g. `"2025-02-20"`). Optional; tasks without a due date appear in the Upcoming column.
+</ParamField>
+
+<ParamField body="priority" type="string" default="Medium">
+  Priority level. Accepted values: `"High"`, `"Medium"`, `"Low"`. Defaults to `"Medium"`.
+</ParamField>
+
+<ParamField body="course" type="string" default="Personal">
+  Course or category name to associate this task with. Defaults to `"Personal"`.
+</ParamField>
+
+<ParamField body="estimated_time" type="integer" default={60}>
+  Estimated time to complete the task, in minutes. Defaults to `60`.
+</ParamField>
+
+<ParamField body="notes" type="string">
+  Optional free-text notes or description for the task.
+</ParamField>
+
+---
+
+## GET /api/v1/tasks — List All Tasks
+
+Returns every task the student has to do — platform assignments, manual tasks, and Notion-synced tasks — in a flat list sorted by urgency. Unlike `GET /api/v1/assignments`, this calls the `/tasks/unified` feed and flattens its three buckets (overdue, today, upcoming) into a single array. Each item carries a `bucket` field indicating which column it belonged to.
+
+**Required scope:** `read:assignments`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X GET https://intelliplan.tech/api/v1/tasks \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "tasks": [
+        {
+          "title": "Chapter 5 Quiz",
+          "course": "AP Biology",
+          "due_date": "2025-02-13",
+          "priority": "High",
+          "source": "canvas",
+          "bucket": "overdue"
+        },
+        {
+          "title": "Review flashcards for midterm",
+          "course": "AP Biology",
+          "due_date": "2025-02-20",
+          "priority": "High",
+          "source": "manual",
+          "bucket": "upcoming"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<ResponseField name="tasks" type="array">
+  Flat array of all tasks, ordered overdue → today → upcoming. Each item includes all assignment fields plus a `bucket` field.
+
+  <Expandable title="Additional fields">
+    <ResponseField name="bucket" type="string">
+      Which urgency column the task belongs to: `"overdue"`, `"today"`, or `"upcoming"`.
+    </ResponseField>
+    <ResponseField name="source" type="string">
+      Origin of the task: `"canvas"`, `"google_classroom"`, `"studentvue"`, `"moodle"`, `"blackboard"`, `"schoology"`, `"manual"`, or `"notion"`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## POST /api/v1/assignments/dismiss — Mark as Done
+
+Marks an assignment as dismissed (completed). Dismissed assignments are hidden from the active dashboard view. This action is reversible with the restore endpoint.
+
+**Required scope:** `write:tasks`
+
+### Request Body
+
+<ParamField body="title" type="string" required>
+  The exact title of the assignment to dismiss.
+</ParamField>
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/v1/assignments/dismiss \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Chapter 5 Reading Quiz"}'
+```
+
+<ResponseField name="status" type="string">
+  `"ok"` on success.
+</ResponseField>
+
+---
+
+## POST /api/v1/assignments/restore — Un-dismiss
+
+Restores a previously dismissed assignment, returning it to the active dashboard. Use this if a task was marked done by mistake or if the student needs to revisit it.
+
+**Required scope:** `write:tasks`
+
+### Request Body
+
+<ParamField body="title" type="string" required>
+  The exact title of the dismissed assignment to restore.
+</ParamField>
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/v1/assignments/restore \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Chapter 5 Reading Quiz"}'
+```
+
+---
+
+## GET /api/v1/tests — List Test Assignments
+
+Returns all assignments that the student has flagged as tests. This is a subset of all assignments — only those where the student explicitly invoked `POST /api/v1/tests` to mark them as exams or quizzes.
+
+**Required scope:** `read:tests`
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/api/v1/tests \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+```
+
+```json title="200 OK"
+{
+  "tests": [
+    {
+      "title": "Midterm Exam",
+      "course": "AP Biology",
+      "due_date": "2025-03-01"
+    }
+  ]
+}
+```
+
+---
+
+## POST /api/v1/tests — Mark as Test
+
+Flags an existing assignment as a test. The AI scheduler treats tests with higher priority and allocates dedicated review blocks in the generated study plan.
+
+**Required scope:** `write:tests`
+
+### Request Body
+
+<ParamField body="title" type="string" required>
+  The title of the assignment to mark as a test.
+</ParamField>
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/v1/tests \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Midterm Exam"}'
+```
+
+---
+
+## DELETE /api/v1/tests — Unmark as Test
+
+Removes the test flag from an assignment. The assignment remains in the regular assignment list; it simply loses its test designation.
+
+**Required scope:** `write:tests`
+
+### Request Body
+
+<ParamField body="title" type="string" required>
+  The title of the test to unmark.
+</ParamField>
+
+```bash title="cURL"
+curl -X DELETE https://intelliplan.tech/api/v1/tests \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Midterm Exam"}'
+```
+
+---
+
+## Error Responses
+
+All errors across the API follow the same envelope shape, so your error handler only needs to be written once.
+
+```json title="Error envelope"
+{
+  "status": "error",
+  "error": "invalid_request",
+  "message": "title required.",
+  "request_id": "a3f1b2c4d5e6f789"
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Common error codes">
+    | Code | HTTP Status | Meaning |
+    |------|-------------|---------|
+    | `unauthorized` | 401 | Missing or invalid API key / Bearer token |
+    | `insufficient_scope` | 403 | Key exists but lacks the required scope |
+    | `invalid_request` | 400 | A required field (e.g. `title`) is missing or malformed |
+    | `upstream_failed` | 502 | The connected school platform returned an error |
+    | `rate_limited` | 429 | Too many requests; slow down and retry |
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  Every response carries an `X-Request-Id` header. If you contact support, share this value — it allows the IntelliPlan team to locate the exact request in logs.
+</Tip>

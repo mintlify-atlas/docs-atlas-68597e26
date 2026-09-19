@@ -1,0 +1,246 @@
+---
+title: "IntelliPlan Desktop App for Windows, macOS, Linux"
+sidebarTitle: "Desktop App"
+description: "A native Electron app for Windows, macOS, and Linux with system tray, global shortcuts, OS notifications, offline handling, and deep-link support."
+---
+
+The IntelliPlan desktop app is a real native application — not a PWA shortcut and not a browser bookmark — built with Electron and packaged with electron-builder. It lives in the `desktop/` directory and delivers capabilities that a browser tab simply cannot provide: OS notifications that fire whether or not any window is open, a system tray entry showing your next scheduled session, a global keyboard shortcut reachable from any application, and persistent sign-in that survives quitting and restarting. It targets Windows, macOS, and Linux from one codebase and produces platform-native installers for each.
+
+## Why a Native App
+
+The web app is rendered inside the window — you get the same feature set — but the following only exist in the desktop build:
+
+| Capability | Why it needs a native app |
+|---|---|
+| **OS notifications** | Fire whether or not a window is open. The browser `Notification` API only works while the page is alive, so a closed tab means a missed session reminder. |
+| **Tray "up next"** | The next scheduled session is visible without opening anything. Refreshes every minute and on wake from sleep. |
+| **Global shortcut** | `Ctrl/Cmd+Shift+S` starts a study session from any application, no Alt-Tab required. |
+| **Persistent session** | Sign in once. The session survives quitting and restarting the app. |
+| **Offline handling** | A dropped connection shows a real reconnecting message instead of Chromium's error page. |
+| **Deep links** | `intelliplan://active` opens straight to the session screen from any other app. |
+
+## Running Locally
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    cd desktop
+    npm install
+    ```
+  </Step>
+  <Step title="Start against production">
+    ```bash
+    npm start
+    ```
+    This runs `electron .` with `IP_TARGET` unset, so the window loads `https://intelliplan.tech`.
+  </Step>
+  <Step title="Start against a local server">
+    ```bash
+    npm run dev
+    # equivalent to: IP_TARGET=http://127.0.0.1:3000 electron .
+    ```
+    Or set `IP_TARGET` explicitly to any URL:
+    ```bash
+    IP_TARGET=http://127.0.0.1:3000 npm start
+    ```
+  </Step>
+</Steps>
+
+## Building Installers
+
+Each platform must be built on its own runner — electron-builder cannot produce a signed macOS build from Windows, and `.github/workflows/desktop-release.yml` enforces this in CI.
+
+<Tabs>
+  <Tab title="Windows">
+    ```bash
+    npm run dist:win
+    ```
+    Produces an **NSIS installer (x64)** and an **arm64 zip** in `dist/`. Artifact names follow the pattern `IntelliPlan-Setup-{version}-{arch}.exe`.
+
+    <Warning>
+      The NSIS installer is x64 only. `electron-builder 26.15.3` produces an ARM64 NSIS package that silently omits `IntelliPlan.exe` and all DLLs — the installer exits 0 and reports success while writing nothing runnable. The arm64 zip contains the native binary for Snapdragon / Copilot+ PCs but installs no Start Menu shortcuts and does not support auto-update. The CI smoke-test now fails the job if `IntelliPlan.exe` is absent, so this regression cannot ship again.
+    </Warning>
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    npm run dist:mac
+    ```
+    Produces a `.dmg` and a `.zip` for both `x64` (Intel) and `arm64` (Apple Silicon) in `dist/`.
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    npm run dist:linux
+    ```
+    Produces an `AppImage`, `.deb`, and `.rpm` for `x64`, plus `AppImage` and `.deb` for `arm64`. RPM is x64 only.
+  </Tab>
+  <Tab title="All platforms (CI)">
+    ```bash
+    npm run dist
+    # electron-builder -mwl
+    ```
+    Runs all three platforms in sequence. In practice, use the GitHub Actions workflow rather than this locally — it builds each platform on the correct runner and attaches installers to the GitHub Release automatically.
+  </Tab>
+</Tabs>
+
+## Publishing a Release
+
+Tagging triggers the CI workflow, which builds all three platforms and attaches the installers to a GitHub Release. The IntelliPlan website's `/download` page reads the latest release from the GitHub API and lists whatever assets it finds — no filenames to keep in sync, and a platform that failed to build is simply absent rather than a dead link.
+
+```bash
+# 1. Bump the version in desktop/package.json
+npm version patch --no-git-tag-version
+
+# 2. Commit and tag
+git commit -am "chore(desktop): 1.0.1"
+git tag -a desktop-v1.0.1 -m "IntelliPlan desktop 1.0.1"
+git push origin main desktop-v1.0.1
+```
+
+<Note>
+  The tag **must** start with `desktop-v`. The release script `desktop_releases.py` only considers tags matching that prefix, so a web or extension tag is never mistaken for a desktop build.
+</Note>
+
+## electron-builder Configuration
+
+Four fields in `desktop/package.json` are load-bearing for packaging:
+
+```json title="desktop/package.json (build section, abridged)"
+{
+  "name": "intelliplan-desktop",
+  "productName": "IntelliPlan",
+  "version": "1.0.0",
+  "build": {
+    "appId": "tech.intelliplan.desktop",
+    "publish": [{ "provider": "github", "owner": "UAnirudh", "repo": "IntelliPlan" }],
+    "protocols": [{ "name": "IntelliPlan", "schemes": ["intelliplan"] }],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "zip",  "arch": ["arm64"] }
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.education",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "hardenedRuntime": true
+    },
+    "linux": {
+      "category": "Education",
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb",      "arch": ["x64", "arm64"] },
+        { "target": "rpm",      "arch": ["x64"] }
+      ]
+    }
+  }
+}
+```
+
+<Accordion title="Why these four package.json fields matter">
+  | Field | Why |
+  |---|---|
+  | `homepage` | `deb` and `rpm` builds refuse to run without it |
+  | `author.email` | Becomes the deb/rpm maintainer field; also required |
+  | `repository` | electron-builder warns and cannot infer the publish target |
+  | `build.publish` | Without a provider, update-info generation dereferences null |
+</Accordion>
+
+## Code Signing
+
+Builds are unsigned by default — no certificate is in the repo. CI sets `CSC_IDENTITY_AUTO_DISCOVERY=false` to stop electron-builder scanning the runner's keychain. Signing turns on by adding repository secrets; nothing in the code changes.
+
+<Warning>
+  The app is **not yet code-signed**. Windows SmartScreen and macOS Gatekeeper will warn users on first launch. The CI plumbing is complete — the only missing piece is the certificates themselves.
+</Warning>
+
+<Tabs>
+  <Tab title="Windows — Azure Trusted Signing">
+    Azure Trusted Signing (~$10/month) is the recommended route. An OV `.pfx` certificate is signed but still triggers SmartScreen until reputation builds — buying little over unsigned. An EV certificate requires a hardware token a CI runner cannot hold.
+
+    | Secret | Value |
+    |---|---|
+    | `AZURE_CODE_SIGNING_ACCOUNT` | Trusted Signing account name |
+    | `AZURE_CODE_SIGNING_PROFILE` | Certificate profile name |
+    | `AZURE_CODE_SIGNING_ENDPOINT` | Region endpoint (e.g. `https://eus.codesigning.azure.net`) |
+    | `AZURE_TENANT_ID` | App registration tenant |
+    | `AZURE_CLIENT_ID` | App registration client ID |
+    | `AZURE_CLIENT_SECRET` | App registration secret |
+  </Tab>
+  <Tab title="macOS — Developer ID">
+    macOS requires both signing **and** notarisation for Gatekeeper to stop refusing the first launch. Set all four secrets or none — signing without notarising still warns.
+
+    | Secret | Value |
+    |---|---|
+    | `CSC_LINK` | Base64 of the Developer ID Application `.p12` |
+    | `CSC_KEY_PASSWORD` | Password for the `.p12` |
+    | `APPLE_ID` | Apple ID email |
+    | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarisation |
+    | `APPLE_TEAM_ID` | Apple Developer Team ID |
+  </Tab>
+</Tabs>
+
+Every release carries a `SHA256SUMS.txt` covering the platforms that built. It lets a student verify a download arrived intact and is the only integrity signal an unsigned build has.
+
+## Google Sign-In
+
+Google refuses to run OAuth inside an embedded browser view — hardest of all against Family Link supervised accounts, which is a large share of the student population this app serves. The desktop app never shows Google's sign-in page in the Electron window. Instead it uses a PKCE-based redirect flow through the system browser:
+
+<Steps>
+  <Step title="App generates a PKCE challenge">
+    `startGoogleSignIn()` invents a verifier, keeps it in memory, and opens `https://intelliplan.tech/login/google?desktop=<challenge>` in the **system browser**.
+  </Step>
+  <Step title="Browser completes Google's OAuth flow">
+    The user signs in as normal through their real browser. The callback server sees the stored challenge, mints a one-time code, and redirects to `intelliplan://auth?code=…`.
+  </Step>
+  <Step title="App redeems the code">
+    The deep link wakes the app. It calls `POST /api/desktop/auth/exchange` with the code and the verifier. The request runs as a `fetch` inside the window so the session cookie lands in the jar the app actually browses with.
+  </Step>
+</Steps>
+
+<Info>
+  The one-time code travels in a deep-link URL that any local program could intercept. It is only half a credential — redeeming it also requires the PKCE verifier, which never leaves the Electron process. Codes are single-use, expire in two minutes, and are stored only as SHA-256. Rules live in `desktop_auth.py`, tested in `tests/test_desktop_auth.py`.
+</Info>
+
+## Security Model
+
+The renderer process is fully sandboxed: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`. Page scripts reach the main process only through the three functions exposed in `src/preload.js`.
+
+<Accordion title="Key security decisions">
+  **No generic IPC channel.** A bridge that forwards arbitrary channel names from page script is the standard path to remote code execution in Electron apps. The `notify()` bridge accepts a title, a body, and a same-app path — a full URL is rejected outright, so page script cannot ask the main process to navigate the window to an external destination.
+
+  **Navigation is pinned to the app's origin.** Any link to a different origin opens in the system browser. This keeps stray links out of the application shell and is also required for Google sign-in, which refuses to run in an embedded view.
+
+  **Permission allowlist.** Notifications, media (for the focus check-in), fullscreen, and sanitised clipboard writes are allowed. Everything else is denied without prompting.
+</Accordion>
+
+## Known Limitations and Roadmap
+
+<Accordion title="Auto-update (not yet enabled)">
+  `electron-updater` is already listed as a dependency in `desktop/package.json` and fits the existing electron-builder config. It was unblocked when the ARM64 installer bug was fixed. What it needs is a release feed to publish to — the CI plumbing for that is already written. This will ship in a patch release.
+</Accordion>
+
+<Accordion title="Code signing (not yet configured)">
+  The CI workflow reads signing credentials from repository secrets and signs automatically when they are set. Nothing in the code needs to change — the only missing piece is the certificate. See the Code Signing section above for the exact secrets required per platform.
+</Accordion>
+
+<Accordion title="ARM64 Windows installer limitation">
+  `electron-builder 26.15.3` produces an ARM64 NSIS installer that reports success but writes no executable. The ARM64 build ships as a `.zip` instead. The x64 installer works correctly on ARM64 hardware (Snapdragon X1E80100 verified) under Windows' x64 translation layer, at some cost in performance. Restore `arm64` to `build.win.target[0].arch` when upstream fixes the issue.
+</Accordion>
+
+<Accordion title="Icon sharpness">
+  Icons are currently the 512 px PWA icon. Platform-native `.icns` (macOS) and `.ico` (Windows) sets would render more crisply at small sizes, particularly in the taskbar and Start Menu.
+</Accordion>
+
+## Platform Build Matrix
+
+| Platform | Installer Format | Architectures | Notes |
+|---|---|---|---|
+| Windows | NSIS installer (`.exe`) | x64 | Verified working on ARM64 hardware via translation |
+| Windows | Zip (`.zip`) | arm64 | No shortcuts; no auto-update; native binary |
+| macOS | DMG (`.dmg`) + Zip | x64, arm64 | Hardened runtime; notarisation ready |
+| Linux | AppImage (`.AppImage`) | x64, arm64 | Self-contained, no install required |
+| Linux | Debian package (`.deb`) | x64, arm64 | Installs via `dpkg -i` |
+| Linux | RPM package (`.rpm`) | x64 | For Fedora / RHEL-based distributions |

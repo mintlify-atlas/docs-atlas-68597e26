@@ -1,0 +1,272 @@
+---
+title: "Lifecycle Email Configuration with Resend or SMTP"
+sidebarTitle: "Email"
+description: "Configure Resend or SMTP for transactional and lifecycle emails, set up DKIM/SPF on a sending subdomain, comply with CAN-SPAM, and schedule the cron jobs."
+---
+
+IntelliPlan sends three types of lifecycle emails — a welcome message, a feedback request, and a weekly newsletter — plus transactional emails such as deadline reminders. All of them flow through a single email path: either Resend (preferred) or a generic SMTP server as a fallback. Getting email right requires more than an API key: you need a verified sending domain with correct DNS records, a physical postal address in every marketing email, and reply-to addresses that actually receive mail. This page walks through all of it.
+
+---
+
+## Choosing a Sending Path
+
+IntelliPlan checks for `RESEND_API_KEY` at startup. If it is set, Resend handles all outgoing mail. If it is not set, IntelliPlan falls back to SMTP using the `SMTP_*` variables. The two paths are mutually exclusive — you cannot use both simultaneously.
+
+<CardGroup cols={2}>
+  <Card title="Resend (Recommended)" icon="bolt">
+    Simple API, first-class deliverability, excellent domain verification UI, and a generous free tier. Preferred for all IntelliPlan deployments.
+  </Card>
+  <Card title="SMTP Fallback" icon="envelope">
+    Use any SMTP server — Gmail with an App Password, SendGrid, Postmark, or your own mail server. No additional libraries needed.
+  </Card>
+</CardGroup>
+
+---
+
+## Resend Setup
+
+<Steps>
+  <Step title="Create an API key">
+    Sign in at [resend.com](https://resend.com) and go to **API Keys → Create API Key**. Copy the key.
+
+    ```bash title=".env"
+    RESEND_API_KEY=re_...
+    ```
+  </Step>
+  <Step title="Add and verify the sending domain">
+    Go to **Resend → Domains → Add Domain**. Use a subdomain rather than your apex domain.
+
+    <Note>
+    `intelliplan.tech` has a CNAME at the apex pointing at Railway. DNS does not permit other record types alongside an apex CNAME, so adding SPF/DKIM records at the apex would conflict. Use the subdomain `send.intelliplan.tech` — this is Resend's own recommendation and avoids any DNS conflict.
+    </Note>
+
+    1. In Resend, add **`send.intelliplan.tech`** (or your equivalent subdomain).
+    2. Resend will show you DKIM and SPF records. Publish them as ordinary subdomain records at your registrar — no apex records, no nameserver change required.
+    3. Wait for Resend to confirm the records are live (usually under 10 minutes).
+  </Step>
+  <Step title="Set the From address">
+    ```bash title=".env"
+    RESEND_FROM=IntelliPlan <noreply@send.intelliplan.tech>
+    ```
+
+    The domain in this address must match your verified Resend domain exactly.
+  </Step>
+  <Step title="Run the preflight check">
+    ```bash
+    curl -X GET https://intelliplan.tech/api/admin/email/preflight
+    ```
+
+    The endpoint reports which variables are missing, whether the reply-to addresses can receive mail, and any other configuration issues. Fix every item it flags before sending to users.
+  </Step>
+</Steps>
+
+---
+
+## SMTP Fallback Setup
+
+Used only when `RESEND_API_KEY` is not set.
+
+```bash title=".env"
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=youraddress@gmail.com
+SMTP_PASSWORD=xxxx xxxx xxxx xxxx   # Gmail App Password — spaces stripped automatically
+SMTP_FROM=IntelliPlan <youraddress@gmail.com>
+```
+
+<Tip>
+For Gmail, generate an App Password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords). This is a 16-character code that works even with 2FA enabled. Spaces in the App Password are stripped automatically by IntelliPlan.
+</Tip>
+
+---
+
+## Reply-To Configuration
+
+All lifecycle emails are sent from a `noreply@` address, but they explicitly invite students to reply. Without correct reply-to setup, every student reply bounces silently.
+
+<Warning>
+`intelliplan.tech` is a send-only domain — it has no MX records, so any email **addressed to it** bounces. Do not set `MARKETING_REPLY_TO` or `SUPPORT_EMAIL` to an address at `intelliplan.tech` until the domain has MX records. Use a Gmail or other working inbox in the meantime.
+</Warning>
+
+```bash title=".env"
+# Where student replies to lifecycle emails land.
+# Must be a mailbox that actually receives email.
+MARKETING_REPLY_TO=youraddress@gmail.com
+
+# Support contact printed as a mailto: link in email bodies.
+# Falls back to MARKETING_REPLY_TO when unset.
+SUPPORT_EMAIL=support@yourdomain.com
+```
+
+---
+
+## CAN-SPAM Compliance: Postal Address
+
+<Warning>
+**CAN-SPAM §7704(a)(5) requires a valid physical postal address in every commercial email.** With `MARKETING_POSTAL_ADDRESS` unset, the newsletter and feedback request sends **refuse to run** and log loudly — they will not ship a non-compliant email silently. The welcome email is transactional and sends without it.
+</Warning>
+
+```bash title=".env"
+# A PO box or registered agent's address is fine.
+# A home address is not required — but the address must exist.
+MARKETING_POSTAL_ADDRESS=IntelliPlan, PO Box 1234, San Jose, CA 95101
+```
+
+This address is rendered in the footer of the weekly newsletter and the feedback request. It is printed verbatim, so format it as you want it to appear.
+
+---
+
+## Lifecycle Email Types
+
+IntelliPlan sends four email variants. Every send passes `intelliplan.email.eligibility.is_marketing_eligible`, which refuses to send to accounts with unknown age, users under 13 without parental consent, non-student roles, or suppressed addresses. Sends are deduplicated on `(user_id, email_key)` in the `email_sends` table — a double cron fire cannot double-send.
+
+<Accordion title="Welcome (welcome)">
+  **Trigger:** Cron, accounts created in the last 36 hours.
+
+  **Consent:** Transactional — no marketing opt-in required.
+
+  **MARKETING_POSTAL_ADDRESS:** Not required.
+
+  The welcome email is sent once per new account. It does not require marketing consent and is the only lifecycle email that sends without `MARKETING_POSTAL_ADDRESS` set.
+</Accordion>
+
+<Accordion title="Feedback Request (feedback_v1)">
+  **Trigger:** Cron, accounts that are 14–15 days old **and** have real activity (not dormant signups).
+
+  **Consent:** Requires `marketing_emails_opt_in = True`.
+
+  **Key:** `feedback_v1` — deduplicated so a daily sweep cannot ask someone twice.
+
+  The feedback email invites students to answer a few short questions about their experience. The 14-day window and activity requirement are quality heuristics — to reach everyone who has given consent regardless of these filters, use the admin blast endpoint:
+
+  ```bash
+  # Dry run — returns recipient count, sends nothing
+  curl -X POST https://intelliplan.tech/api/admin/feedback-blast/preview
+
+  # Send — requires {"confirm": true}
+  curl -X POST https://intelliplan.tech/api/admin/feedback-blast/send \
+       -H "Content-Type: application/json" \
+       -d '{"confirm": true}'
+  ```
+</Accordion>
+
+<Accordion title="Weekly Newsletter (newsletter_YYYY_wWW)">
+  **Trigger:** Cron, every Thursday at 16:00 UTC.
+
+  **Consent:** Requires `marketing_emails_opt_in = True`.
+
+  **Key:** One per ISO week — a repeat cron fire is a no-op.
+
+  The weekly newsletter is generated and sent unattended. Each issue contains four sections: recent product changes (from an allow-list of `feat` and `fix` commits), a rotating how-to tip, a rotating study-science item with citation, and a live stats row. Sections are deterministic — the same ISO week always produces the same content, so the preview is exactly what gets sent.
+
+  Preview this week's issue before it goes:
+
+  ```bash
+  curl -X POST https://intelliplan.tech/api/admin/newsletter/weekly-preview
+  ```
+
+  <Note>
+  The changelog section needs a committed snapshot — `.git` is excluded from the Docker build context so the container cannot run `git log`. Refresh before deploying:
+
+  ```bash
+  python scripts/refresh_changelog.py
+  ```
+  </Note>
+</Accordion>
+
+<Accordion title="One-Off Newsletter (newsletter_YYYY_MM)">
+  **Trigger:** Admin only, never automatic.
+
+  **Consent:** Requires `marketing_emails_opt_in = True`.
+
+  Always send in two steps — dry run first:
+
+  ```bash
+  # Dry run — returns recipient count, sends nothing
+  curl -X POST https://intelliplan.tech/api/admin/newsletter/preview \
+       -H "Content-Type: application/json" \
+       -d @newsletter.json
+
+  # Test on admin emails only (repeatable — does not write the ledger)
+  curl -X POST https://intelliplan.tech/api/admin/newsletter/send \
+       -H "Content-Type: application/json" \
+       -d '{"test": true, ...}'
+
+  # Full send — requires {"confirm": true}; without it returns 409 + dry-run count
+  curl -X POST https://intelliplan.tech/api/admin/newsletter/send \
+       -H "Content-Type: application/json" \
+       -d '{"confirm": true, ...}'
+  ```
+</Accordion>
+
+---
+
+## Cron Schedule
+
+Two cron jobs drive lifecycle email delivery. Both use `CRON_SECRET` for authentication (pass as `X-Cron-Secret` or `X-Cron-Token` header, or `?secret=` query parameter).
+
+| Job | Endpoint | Schedule | Railway Expression |
+|---|---|---|---|
+| Lifecycle emails (welcome + feedback) | `POST /cron/lifecycle-emails` | Daily at 16:00 UTC | `0 16 * * *` |
+| Weekly newsletter | `POST /cron/weekly-newsletter` | Thursdays at 16:00 UTC | `0 16 * * 4` |
+
+```bash
+# Daily lifecycle emails
+curl -X POST https://intelliplan.tech/cron/lifecycle-emails \
+     -H "X-Cron-Secret: $CRON_SECRET"
+
+# Weekly newsletter (Thursdays)
+curl -X POST https://intelliplan.tech/cron/weekly-newsletter \
+     -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+Both runs are idempotent — the deduplication ledger makes repeat runs no-ops.
+
+---
+
+## Unsubscribe
+
+IntelliPlan provides a one-click unsubscribe endpoint that works without being logged in:
+
+```
+GET|POST /email/unsubscribe/<token>
+```
+
+The token never expires. Unsubscribing sets `marketing_emails_opt_in = False` on the user and adds the **email address** (not the user ID) to `email_suppressions`. This means deleting and recreating an account does not reset the suppression — the address stays suppressed. Deadline reminders are transactional and are deliberately unaffected by unsubscribe.
+
+---
+
+## Marketing Eligibility Rules
+
+Every marketing send (feedback, newsletter) passes `intelliplan.email.eligibility.is_marketing_eligible`. A send is refused if any of the following apply:
+
+<Accordion title="Eligibility rules checked before every marketing send">
+  | Rule | What triggers a refusal |
+  |---|---|
+  | Age gate | User's age is unknown |
+  | Under-13 gate | User is under 13 without verified parental consent |
+  | Consent | `marketing_emails_opt_in` is not `True` |
+  | Undated consent | Consent was recorded without a timestamp |
+  | Role gate | Account is not a student role |
+  | Suppression list | Email address is in `email_suppressions` |
+</Accordion>
+
+---
+
+## Preflight Check
+
+Before sending to any users, run the preflight endpoint to verify your configuration:
+
+```bash
+curl -X GET https://intelliplan.tech/api/admin/email/preflight
+```
+
+The response reports:
+
+- Whether `RESEND_API_KEY` or SMTP credentials are set
+- Whether `RESEND_FROM` / `SMTP_FROM` uses a verified domain
+- Whether `MARKETING_REPLY_TO` and `SUPPORT_EMAIL` point at addresses that can receive mail
+- Whether `MARKETING_POSTAL_ADDRESS` is set
+- Any other configuration issues that would block a send
+
+Fix every flagged item before running cron jobs or the admin blast endpoints.

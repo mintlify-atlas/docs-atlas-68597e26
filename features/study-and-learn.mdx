@@ -1,0 +1,125 @@
+---
+title: "Study & Learn: Flashcards, Quizzes, and Summaries"
+sidebarTitle: "Study & Learn"
+description: "Upload notes or paste text to generate flashcards, quizzes, key concepts, and summaries. A built-in spaced repetition system tracks mastery per question."
+---
+
+Study & Learn transforms your raw course materials into active study tools in seconds. Upload a PDF, paste lecture notes, or drop in a YouTube video link — IntelliPlan reads the content and generates flashcards for active recall, quiz questions at varying difficulty, key concept definitions, and a concise summary. A built-in spaced repetition system (SRS) then schedules reviews based on how well you actually know each item, so you spend more time on what needs work and less on what you already know.
+
+## Supported Input Formats
+
+IntelliPlan accepts content from multiple sources. You can mix and match — upload a PDF of your slides and paste additional notes in the same session.
+
+<CardGroup cols={2}>
+  <Card title="File uploads" icon="file-arrow-up">
+    **PDF, DOCX, TXT, MD, CSV** — upload any combination of course notes, reading excerpts, or study guides. Files are stored per user under `uploads/course_notes/`.
+  </Card>
+  <Card title="Pasted text" icon="clipboard">
+    Paste lecture notes, copied paragraphs, or any plain text directly into the text field. No file needed.
+  </Card>
+  <Card title="YouTube video transcript" icon="youtube">
+    Paste a YouTube video URL and IntelliPlan imports the transcript automatically. Useful for recorded lectures and educational videos.
+  </Card>
+  <Card title="Handwritten notes (image)" icon="camera">
+    Upload a photo or scan of handwritten notes. The AI vision model extracts and interprets the text before generating study materials.
+  </Card>
+</CardGroup>
+
+## Generating Study Materials
+
+<Steps>
+  <Step title="Upload or paste your content">
+    Choose a file to upload, paste text directly, or enter a YouTube URL. You can combine multiple sources before generating.
+  </Step>
+  <Step title="Select what to generate">
+    Choose one or more outputs: **Flashcards**, **Key Concepts**, **Quiz Questions**, or **Summary**. You can generate all four at once.
+  </Step>
+  <Step title="Generate">
+    Click **Generate**. IntelliPlan calls `/study/generate` with your content and returns all selected materials.
+  </Step>
+  <Step title="Study">
+    Review flashcards in flip mode, work through quiz questions, read key concepts, or skim the summary. Quiz answers are evaluated by AI when you submit.
+  </Step>
+</Steps>
+
+## What Gets Generated
+
+<Tabs>
+  <Tab title="Flashcards">
+    Classic question-and-answer cards designed for active recall. Flip a card to reveal the answer, then mark whether you got it right or not. Your response feeds the SRS to schedule the next review.
+  </Tab>
+  <Tab title="Key Concepts">
+    A list of the most important terms, ideas, and definitions extracted from your content. Each concept includes a short explanation that can be expanded.
+  </Tab>
+  <Tab title="Quiz Questions">
+    Multiple-choice and free-response questions at varying difficulty levels. When you submit an answer, IntelliPlan sends it to `/study/evaluate` where the AI scores it and provides targeted feedback — not just "correct" or "wrong."
+  </Tab>
+  <Tab title="Summary">
+    A concise, structured summary of your uploaded notes. Generated via `/notes/<id>/summarize` and saved alongside the source material so you can reference it later.
+  </Tab>
+</Tabs>
+
+## AI Image Analysis for Handwritten Notes
+
+If you upload a photo of handwritten notes, IntelliPlan routes it through the AI vision pipeline before generating study materials.
+
+```
+POST /study/analyze-image
+```
+
+The vision model (Google Gemini 2.5 Flash, with Groq Llama 4 Scout as fallback) reads the image, extracts the text content, and passes it into the same generation pipeline as any other input. Diagrams, equations, and annotated figures are interpreted alongside the written text.
+
+<Note>
+  Image analysis works best on clearly lit, reasonably straight photos. Heavily skewed or blurry scans may produce incomplete extractions. If results are poor, try a higher-resolution image or flatten the page.
+</Note>
+
+## Study & Learn API Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/study/generate` | POST | Generate flashcards, quiz questions, key concepts, and/or summary from notes |
+| `/study/evaluate` | POST | AI-evaluate a student's quiz answer and return scored feedback |
+| `/study/analyze-image` | POST | Extract text and content from an uploaded handwritten-notes image |
+| `/notes/<id>/summarize` | POST | AI-summarize a specific uploaded course notes file |
+
+## Spaced Repetition System (SRS)
+
+IntelliPlan includes a full spaced repetition system that tracks your mastery level on every flashcard and quiz question individually. Rather than cycling through cards in a fixed order, the SRS uses your answer history to decide when each card needs to be reviewed next.
+
+<AccordionGroup>
+  <Accordion title="How mastery is tracked">
+    Each question has its own mastery score. Correct answers increase it; incorrect answers decrease it. The SRS uses this score to determine review intervals — high-mastery cards are shown less often, low-mastery cards appear more frequently.
+  </Accordion>
+  <Accordion title="Review scheduling">
+    After each study session the SRS calculates due dates for every card you reviewed. Cards you struggled with come back sooner; cards you knew well are pushed further out. The AI Scheduler reads these due dates and budgets review time into your weekly study plan automatically.
+  </Accordion>
+  <Accordion title="Mastery levels">
+    Cards progress through mastery levels as you answer them correctly over time. The dashboard shows your overall mastery for each note set and highlights which cards are due for review today.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+  Connect your SRS data to the AI Scheduler. When you generate a weekly plan, the scheduler reads how many cards fall due on each day and reserves time for reviews — preventing the common problem of a planner that ignores your SRS workload entirely.
+</Tip>
+
+## AI Quiz Evaluation
+
+When you answer a quiz question, your response is sent to the AI for evaluation — not matched against a static answer key. This means:
+
+- **Partial credit** is possible for answers that are mostly right but missing a nuance.
+- **Feedback is specific**: the AI explains exactly what was correct, what was missing, and what the complete answer should have been.
+- **Free-response questions** are supported alongside multiple-choice, so you can practice essay-style answers.
+
+```
+POST /study/evaluate
+```
+
+Request body includes the question, your answer, and the source content context so the AI can evaluate accuracy against the actual material — not just generic knowledge.
+
+## Note Organisation
+
+Uploaded files are associated with your account and optionally tagged to a specific course. You can return to previously generated study sets without re-uploading, and notes are available across devices since they are stored server-side.
+
+<Warning>
+  File uploads are stored under `uploads/course_notes/` on the server. Do not upload files containing sensitive personal information beyond what is in your course notes.
+</Warning>

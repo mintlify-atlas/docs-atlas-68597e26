@@ -1,0 +1,142 @@
+---
+title: "Grades & Grade Modeler: Simulate Your GPA"
+sidebarTitle: "Grades"
+description: "View your live GPA and per-course grades pulled from your school platform. Use the Grade Modeler to simulate how upcoming scores will affect your GPA."
+---
+
+The Grades view gives you a live, consolidated picture of where you stand academically — GPA, per-course grades, and individual assignment scores, all pulled directly from your connected school platform. The **Grade Modeler** goes a step further: enter a hypothetical score on an upcoming assignment or exam and see exactly how it changes your course grade and cumulative GPA before you even sit the test. Together they power IntelliPlan's priority scoring so you always know which work moves the needle most.
+
+## Live GPA Overview
+
+Your GPA is fetched live from your connected school platform every time you open the Grades view. No manual entry, no stale data — what you see matches what your LMS shows.
+
+<CardGroup cols={2}>
+  <Card title="Cumulative GPA" icon="chart-bar">
+    Your overall GPA displayed prominently at the top, calculated from all active courses pulled from your connected platform.
+  </Card>
+  <Card title="Per-course grades" icon="book">
+    Each course lists its current grade, the percentage breakdown, and the assignments that make it up — points earned, points possible, and due date.
+  </Card>
+</CardGroup>
+
+The grades data endpoint:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/grades/data` | GET | Grade data per course, including assignment-level breakdowns |
+| `/courses` | GET | List of all active courses from connected platforms |
+
+## Grade Modeler
+
+The Grade Modeler is a what-if simulator built directly into the Grades view. Select any upcoming or existing assignment, enter a hypothetical score, and IntelliPlan instantly recalculates your projected course grade and GPA.
+
+<Steps>
+  <Step title="Open the Grade Modeler">
+    From the Grades view, click **Grade Modeler** (or navigate directly to `/grademodel`).
+  </Step>
+  <Step title="Select a course and assignment">
+    Choose the course you want to model, then select the assignment or exam you are hypothesising about.
+  </Step>
+  <Step title="Enter a hypothetical score">
+    Type in the percentage or raw score you want to simulate — for example, "What if I score 85% on my chemistry midterm?"
+  </Step>
+  <Step title="See the impact">
+    The modeler recalculates your projected course grade and cumulative GPA in real time. You can adjust the score and see the projection update instantly.
+  </Step>
+  <Step title="Run multiple scenarios">
+    Model several assignments at once — "What if I ace the final but miss the lab report?" — to understand the full range of outcomes.
+  </Step>
+</Steps>
+
+<Tip>
+  Use the Grade Modeler before the AI Scheduler generates your weekly plan. Knowing which assignments can meaningfully lift your GPA lets you set priority overrides before the scheduler runs.
+</Tip>
+
+## How Grades Drive Priority Scoring
+
+The same data the Grade Modeler uses — points possible, due date, and course weight — feeds directly into IntelliPlan's assignment priority scoring. Every assignment on the Dashboard receives a **High**, **Medium**, or **Low** badge computed from three factors:
+
+<AccordionGroup>
+  <Accordion title="Points possible">
+    An assignment worth 100 points moves your grade more than one worth 10. Higher point values translate directly to a higher base priority score.
+  </Accordion>
+  <Accordion title="Due date proximity">
+    Priority climbs as the deadline approaches. An assignment due tomorrow scores significantly higher than an identical one due in two weeks, because procrastinating on a near-term item is riskier.
+  </Accordion>
+  <Accordion title="Course weight">
+    If a course counts for more of your GPA (e.g., an AP class with a weighted multiplier), every assignment in that course receives a higher priority than assignments in a lower-weight elective — even if the raw points are the same.
+  </Accordion>
+</AccordionGroup>
+
+This means the Priority View and the Dashboard are not just sorted by due date — they are sorted by genuine academic impact. Finishing the highest-priority item first always has the largest effect on your GPA.
+
+## Supported Platforms
+
+Grades are pulled live from every platform IntelliPlan supports:
+
+<CardGroup cols={3}>
+  <Card title="Canvas LMS" icon="graduation-cap">
+    Assignment scores, course grades, and GPA via the Canvas REST API.
+  </Card>
+  <Card title="Google Classroom" icon="google">
+    Course grades and assignment scores via Google OAuth.
+  </Card>
+  <Card title="StudentVue" icon="school">
+    Live grades and missing work via the StudentVue API.
+  </Card>
+  <Card title="Schoology" icon="book">
+    Course and assignment grades via API key.
+  </Card>
+  <Card title="Blackboard Learn" icon="chalkboard">
+    Gradebook data via OAuth 2.0 (3LO).
+  </Card>
+  <Card title="Moodle" icon="puzzle-piece">
+    Assignment grades via web-services token.
+  </Card>
+</CardGroup>
+
+<Note>
+  If you have multiple platforms connected simultaneously, IntelliPlan merges grades from all of them. Courses from different platforms appear side by side in the Grades view.
+</Note>
+
+## Missing and Overdue Assignments
+
+The Grades view also surfaces missing work — assignments that are past due and not yet submitted — pulled from the same live data feed.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/missing/data` | GET | Missing and overdue assignments across all connected platforms |
+
+Missing assignments are highlighted in the Grades view and appear in the **Overdue** column on the Dashboard. Their priority scores are elevated automatically because missing work typically has a large negative impact on your grade.
+
+## Grade Modeler: Behind the Scenes
+
+The Grade Modeler calculates projected grades using the weighting scheme your school platform reports. The calculation is straightforward:
+
+```
+Projected course grade = (
+    (sum of earned points on completed assignments)
+  + (hypothetical score × points possible for selected assignment)
+) ÷ (
+    total points possible for all assignments in grading period
+)
+```
+
+For GPA projection, the updated course grade is converted to the grade-point scale your institution uses and blended with your other course grades by credit weight.
+
+<Info>
+  The Grade Modeler works with whatever grading data your connected platform provides. If your platform reports only letter grades rather than point totals, the modeler operates in letter-grade mode and shows projected letter-grade changes instead of exact percentages.
+</Info>
+
+## Classes View
+
+The **Classes View** (`/courses`) is a companion to the Grades view. It shows all assignments filtered by course, so you can drill into a single class and see every task — past, present, and upcoming — in one place. It works across all connected platforms simultaneously.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/courses` | GET | List all active courses across connected platforms |
+| `/grades/data` | GET | Full grade data including per-assignment breakdowns |
+
+<Warning>
+  Grades shown in IntelliPlan reflect what your school platform has reported. If a teacher has not yet entered scores, or if there is a sync delay on the platform side, IntelliPlan will show the last available data. Refresh the Grades view to pull the latest figures.
+</Warning>

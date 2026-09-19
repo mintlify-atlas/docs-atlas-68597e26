@@ -1,0 +1,435 @@
+---
+title: "Authenticate with IntelliPlan API Keys and Tokens"
+sidebarTitle: "Authentication"
+description: "How to authenticate IntelliPlan API requests using scoped API keys (X-API-Key) or first-party Bearer tokens, with scope definitions and code examples."
+---
+
+Every IntelliPlan API request must prove its identity before touching student data. The API supports two authentication schemes — API keys for third-party integrations and Bearer tokens for first-party clients — and they serve different trust boundaries by design. API keys are scoped, revocable, and rate-limited per key, so a compromised credential can be neutralised instantly without affecting other integrations. Bearer tokens carry every scope and are tied to the server's secret key, so they are reserved for software the student runs on their own behalf. Choosing the right scheme up front keeps your integration secure and your key's blast radius small.
+
+## Choosing an Authentication Method
+
+<Tabs>
+  <Tab title="API Key (X-API-Key)">
+    Use an API key when you are building a **third-party application** that accesses IntelliPlan data on behalf of a student who has authorised your app. This is the scheme the documentation describes and the one you should use by default.
+
+    **Characteristics:**
+    - Prefixed with `ip_live_` — easy to detect in logs and `.env` files
+    - Scoped to exactly the permissions you requested at application time
+    - Revocable immediately from the developer dashboard; the old key stops working the instant it is rolled or revoked
+    - Rate-limited per key (not per IP), so your integration has its own budget
+    - Stored as a SHA-256 hash on IntelliPlan's servers — the plaintext is never recoverable after issuance
+
+    ```bash title="API Key example"
+    curl https://intelliplan.tech/api/v1/me \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+  </Tab>
+  <Tab title="Bearer Token">
+    Use a Bearer token when you are building a **first-party client** — software where the student is directly handing their own credentials to their own tool. The IntelliPlan MCP server and the browser extension are the canonical examples.
+
+    **Characteristics:**
+    - Obtained by posting `{email, password}` to `POST /api/v1/auth/token`
+    - Automatically carries **every scope** — no scope selection required
+    - Cannot be revoked per-client; revocation requires rotating the server's `SECRET_KEY`
+    - Not appropriate for third-party apps because a token compromise cannot be isolated without invalidating all tokens
+
+    ```bash title="Bearer Token example"
+    curl https://intelliplan.tech/api/v1/me \
+      -H "Authorization: Bearer YOUR_TOKEN_HERE"
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+  If the API receives both an `X-API-Key` header and an `Authorization: Bearer` header on the same request, the API key takes precedence. The narrower, revocable credential always governs. Additionally, if you accidentally paste an `ip_live_…` key into the `Authorization: Bearer` field, the API detects it and accepts it rather than returning a 401.
+</Info>
+
+---
+
+## API Key Authentication
+
+### How to Apply
+
+Navigate to [intelliplan.tech/developers](https://intelliplan.tech/developers) while signed in to your IntelliPlan account. You cannot obtain a key without a registered account, and your account must be at least one hour old before applications are accepted.
+
+<Steps>
+  <Step title="Fill out the application form">
+    Provide:
+    - **App name** — what your integration is called (2–120 characters)
+    - **App URL** — a link to your project or documentation (optional but recommended)
+    - **Use case** — describe what you are building in at least 40 characters; this is the primary thing a reviewer reads for write-scope applications
+    - **Contact email** — defaults to your account email; used to deliver your key and any review decisions
+    - **Expected volume** — `low`, `medium`, or `high` (see rate limits below)
+  </Step>
+  <Step title="Select scopes">
+    Choose the minimum set of scopes your integration actually needs. The scope selector at `/developers/scopes` lists every available scope with labels, descriptions, and whether human review is required.
+  </Step>
+  <Step title="Accept the API terms">
+    You must check the acceptance box before submitting.
+  </Step>
+  <Step title="Receive your key">
+    - **Read-only applications** are approved automatically and the key is returned in the same response.
+    - **Write-scope applications** are queued for human review, typically within two business days. You will receive an email either way.
+
+    Copy your key the moment it appears. **This is the only time it is shown in plaintext.** IntelliPlan stores only a SHA-256 hash and cannot recover your key.
+  </Step>
+</Steps>
+
+<Warning>
+  Each account may hold up to **5 active or pending keys**. Revoke unused keys before applying for new ones — pending applications count against this limit.
+</Warning>
+
+### Using Your API Key
+
+Send the key in the `X-API-Key` request header on every call:
+
+```bash title="Authenticated request with an API key"
+curl https://intelliplan.tech/api/v1/assignments \
+  -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+```
+
+Keys always start with `ip_live_`. If your key does not match this prefix, it will not be recognised.
+
+### Rolling a Lost Key
+
+If you lose your key or suspect it has been compromised, roll it from the developer dashboard. The previous key stops working the instant the roll completes — there is no grace period.
+
+```bash title="Roll a key via the developer API (authenticated web session)"
+POST /developers/keys/{key_id}/roll
+```
+
+The response contains the new plaintext secret, shown exactly once. Store it immediately.
+
+### Rate Limits
+
+Your key's rate-limit ceiling is set when the application is approved and is based on the `expected_volume` you declared:
+
+| Volume tier | Requests per minute |
+|-------------|---------------------|
+| `low` | 60 |
+| `medium` | 300 |
+| `high` | 1,000 |
+
+The `X-RateLimit-Limit` header on every API response shows the ceiling for the current key. When you exceed it, you receive a `429 rate_limited` error with an optional `retry_after` field. The `high` tier requires human approval regardless of scope type.
+
+---
+
+## Bearer Token Authentication
+
+Bearer tokens are for first-party clients only — software the student runs directly. Do not use Bearer tokens in third-party integrations.
+
+### Obtaining a Token
+
+`POST /api/v1/auth/token` does not require any prior credential. Send a JSON body with `email` and `password`:
+
+```bash title="Exchange credentials for a Bearer token"
+curl -X POST https://intelliplan.tech/api/v1/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"email": "student@university.edu", "password": "correct-horse-battery"}'
+```
+
+```json title="Successful response"
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "Bearer",
+  "scopes": [
+    "read:profile", "read:assignments", "read:tests",
+    "read:schedule", "read:streak", "read:grades",
+    "read:identity", "write:tasks", "write:tests",
+    "write:schedule", "write:identity"
+  ],
+  "user": {
+    "id": 42,
+    "email": "student@university.edu",
+    "name": "Alex Chen"
+  }
+}
+```
+
+<ResponseField name="token" type="string">
+  The Bearer token to include in subsequent `Authorization: Bearer …` headers.
+</ResponseField>
+
+<ResponseField name="token_type" type="string">
+  Always `"Bearer"`.
+</ResponseField>
+
+<ResponseField name="scopes" type="array">
+  All available scopes — Bearer tokens carry every scope with no restrictions.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Basic account info: `id`, `email`, and `name`.
+</ResponseField>
+
+### Using the Token
+
+Include the token in the `Authorization` header as a standard Bearer credential:
+
+```bash title="Authenticated request with a Bearer token"
+curl https://intelliplan.tech/api/v1/me \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+```javascript title="JavaScript / fetch"
+const response = await fetch("https://intelliplan.tech/api/v1/assignments", {
+  headers: {
+    "Authorization": `Bearer ${token}`,
+    "Content-Type": "application/json",
+  },
+});
+const data = await response.json();
+```
+
+```python title="Python / requests"
+import requests
+
+resp = requests.get(
+    "https://intelliplan.tech/api/v1/assignments",
+    headers={"Authorization": f"Bearer {token}"},
+)
+data = resp.json()
+```
+
+---
+
+## Scopes Reference
+
+Scopes define exactly what a credential is allowed to do. API keys are restricted to the scopes selected at application time. Bearer tokens carry all scopes automatically.
+
+Each scope is either read-only (auto-approvable for API keys) or a write scope (requires human review).
+
+| Scope | Label | Requires Review | Description |
+|-------|-------|:---------------:|-------------|
+| `read:profile` | Read profile | ✗ | Name, email, and account creation date. |
+| `read:assignments` | Read assignments | ✗ | The unified assignment list from every connected source. |
+| `read:tests` | Read tests | ✗ | Assignments the student has marked as tests. |
+| `read:schedule` | Read schedule | ✗ | Saved study plans and their progress. |
+| `read:streak` | Read streak | ✗ | Sparks, streak length, level, and quest state. |
+| `read:grades` | Read grades | ✗ | Course grades and GPA from the connected school platform. |
+| `read:identity` | Read learning profile | ✗ | Grade level, focus areas, goals, availability. |
+| `write:tasks` | Create tasks | ✔ | Add manual tasks, dismiss and restore assignments. |
+| `write:tests` | Mark tests | ✔ | Mark and unmark assignments as tests. |
+| `write:schedule` | Generate schedules | ✔ | Run the scheduler and save the resulting plan. |
+| `write:identity` | Update learning profile | ✔ | Change grade level, focus areas, goals, availability. |
+
+<Note>
+  `read:grades` is intentionally separate from `read:assignments`. Knowing what a student has due is a different level of trust from knowing what they scored. Request only what your integration genuinely needs.
+</Note>
+
+<Accordion title="Why are write scopes reviewed by a human?">
+  Write scopes allow your application to create tasks, dismiss assignments, generate study schedules, or alter a student's learning profile. These actions modify a student's account directly. IntelliPlan reviews write-scope applications to verify the use case is legitimate and the scope selection is proportionate to what is being built. Review typically takes under two business days.
+</Accordion>
+
+---
+
+## Authentication Errors
+
+When a request fails authentication or authorisation, you receive one of these error envelopes:
+
+<Tabs>
+  <Tab title="Missing credential (401)">
+    ```json
+    {
+      "status": "error",
+      "error": "unauthorized",
+      "message": "Send a valid `X-API-Key` header, or a Bearer token from POST /api/v1/auth/token. Apply for a key at /developers.",
+      "request_id": "a1b2c3d4e5f60718"
+    }
+    ```
+
+    **Cause:** No `X-API-Key` header and no `Authorization` header were sent, or the values were empty.
+  </Tab>
+  <Tab title="Invalid key or token (401)">
+    ```json
+    {
+      "status": "error",
+      "error": "unauthorized",
+      "message": "Send a valid `X-API-Key` header, or a Bearer token from POST /api/v1/auth/token. Apply for a key at /developers.",
+      "request_id": "b2c3d4e5f6071819"
+    }
+    ```
+
+    **Cause:** The key or token was sent but did not resolve to a valid, active credential. Possible causes: the key was revoked, the token has expired, or the value was truncated during copy-paste.
+  </Tab>
+  <Tab title="Missing scope (403)">
+    ```json
+    {
+      "status": "error",
+      "error": "insufficient_scope",
+      "message": "This key is not authorized for that. Missing scope(s): read:grades.",
+      "request_id": "c3d4e5f607181920",
+      "required": ["read:grades"],
+      "granted": ["read:profile", "read:assignments"]
+    }
+    ```
+
+    **Cause:** The credential is valid, but it does not include a scope required by this endpoint. The `required` and `granted` fields show exactly what is missing.
+  </Tab>
+</Tabs>
+
+---
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Store keys in environment variables" icon="shield-halved">
+    Never hardcode `ip_live_…` keys in source code or commit them to version control. Use `.env` files locally and secret management (Railway variables, GitHub Secrets, etc.) in production.
+  </Card>
+  <Card title="Request minimum scopes" icon="minimize">
+    Only request the scopes your integration actually uses. A read-only dashboard widget does not need `write:tasks`. Narrow scope means a smaller blast radius if the key is ever exposed.
+  </Card>
+  <Card title="Roll compromised keys immediately" icon="arrow-rotate-right">
+    If a key is accidentally committed or leaked, roll it from the developer dashboard without delay. The old key is invalidated the instant the roll completes — no grace period, no overlap window.
+  </Card>
+  <Card title="Use API keys for third-party apps" icon="key">
+    Never distribute a Bearer token to end users or embed one in a third-party app. Bearer tokens carry all scopes and cannot be revoked per-client. API keys are the correct credential for anything you ship to others.
+  </Card>
+</CardGroup>
+
+---
+
+## Complete Code Examples
+
+<Tabs>
+  <Tab title="cURL (API Key)">
+    ```bash title="List assignments with an API key"
+    curl https://intelliplan.tech/api/v1/assignments \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+
+    ```bash title="Create a manual task"
+    curl -X POST https://intelliplan.tech/api/v1/tasks \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "title": "Review chapter 5 notes",
+        "due_date": "2025-01-20",
+        "priority": "High",
+        "course": "Biology",
+        "estimated_time": 90
+      }'
+    ```
+  </Tab>
+  <Tab title="Python (API Key)">
+    ```python title="intelliplan_client.py"
+    import os
+    import requests
+
+    API_BASE = "https://intelliplan.tech/api/v1"
+    API_KEY  = os.environ["INTELLIPLAN_API_KEY"]   # ip_live_…
+
+    session = requests.Session()
+    session.headers.update({"X-API-Key": API_KEY})
+
+    def get_assignments():
+        resp = session.get(f"{API_BASE}/assignments")
+        resp.raise_for_status()
+        return resp.json()["assignments"]
+
+    def create_task(title, due_date=None, priority="Medium", course="Personal"):
+        resp = session.post(f"{API_BASE}/tasks", json={
+            "title": title,
+            "due_date": due_date,
+            "priority": priority,
+            "course": course,
+        })
+        resp.raise_for_status()
+        return resp.json()
+
+    if __name__ == "__main__":
+        for assignment in get_assignments():
+            print(assignment.get("title"), "—", assignment.get("due_date"))
+    ```
+  </Tab>
+  <Tab title="Python (Bearer Token)">
+    ```python title="bearer_auth_example.py"
+    import os
+    import requests
+
+    API_BASE = "https://intelliplan.tech/api/v1"
+
+    def get_token(email: str, password: str) -> str:
+        """Exchange credentials for a Bearer token."""
+        resp = requests.post(f"{API_BASE}/auth/token", json={
+            "email": email,
+            "password": password,
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        return data["token"]
+
+    def build_session(token: str) -> requests.Session:
+        sess = requests.Session()
+        sess.headers.update({"Authorization": f"Bearer {token}"})
+        return sess
+
+    # First-party usage: the user provides their own credentials
+    token = get_token(
+        email=os.environ["INTELLIPLAN_EMAIL"],
+        password=os.environ["INTELLIPLAN_PASSWORD"],
+    )
+    sess = build_session(token)
+
+    me = sess.get(f"{API_BASE}/me").json()
+    print(f"Authenticated as: {me['name']} ({me['email']})")
+
+    streak = sess.get(f"{API_BASE}/streak").json()
+    print(f"Current streak: {streak}")
+    ```
+  </Tab>
+  <Tab title="JavaScript (API Key)">
+    ```javascript title="intelliplan.js"
+    const API_BASE = "https://intelliplan.tech/api/v1";
+    const API_KEY  = process.env.INTELLIPLAN_API_KEY; // ip_live_…
+
+    async function apiRequest(path, options = {}) {
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers: {
+          "X-API-Key": API_KEY,
+          "Content-Type": "application/json",
+          ...(options.headers ?? {}),
+        },
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(`${err.error}: ${err.message} (request_id: ${err.request_id})`);
+      }
+
+      return response.json();
+    }
+
+    // List assignments
+    const { assignments } = await apiRequest("/assignments");
+    console.log(`${assignments.length} assignments found`);
+
+    // Create a task
+    const task = await apiRequest("/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Finish problem set 3",
+        due_date: "2025-01-22",
+        priority: "High",
+        course: "Mathematics",
+        estimated_time: 120,
+      }),
+    });
+    console.log("Created task:", task);
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Overview" icon="book-open" href="/api/overview">
+    Review the base URL, error envelope, response headers, and a map of every endpoint group.
+  </Card>
+  <Card title="Apply for an API Key" icon="key" href="https://intelliplan.tech/developers">
+    Submit your application, select scopes, and receive your `ip_live_…` key at the developer portal.
+  </Card>
+</CardGroup>

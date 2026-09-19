@@ -1,0 +1,368 @@
+---
+title: "Environment Variables Reference for IntelliPlan"
+sidebarTitle: "Env Variables"
+description: "Complete reference for every IntelliPlan environment variable, grouped by subsystem, with required/optional status and production deployment guidance."
+---
+
+IntelliPlan is configured entirely through environment variables — there is no GUI settings panel and no config file committed to the repository. In local development, copy `.env.example` to `.env` (which is gitignored) and fill in real values. On Railway, Render, or any other PaaS, set these as dashboard environment variables rather than committing them. The sections below cover every variable IntelliPlan reads, what happens when one is absent, and where to get the value.
+
+<Warning>
+Never commit `.env` or any file containing real secrets to version control. The `.env.example` file in the repository is a safe template — all sensitive values are blank or set to placeholder strings.
+</Warning>
+
+---
+
+## Core
+
+These four variables must be set in every environment. The application will start without them but will be insecure or non-functional.
+
+<ParamField path="SECRET_KEY" type="string" required>
+  Flask's cryptographic signing key. Used for session cookies, CSRF tokens, and any other signed value. Set this to a long, random string and never reuse it across deployments. Generate one with:
+
+  ```bash
+  python -c "import secrets; print(secrets.token_hex(32))"
+  ```
+</ParamField>
+
+<ParamField path="APP_BASE_URL" type="string" required>
+  The canonical origin of the deployment, e.g. `https://intelliplan.tech`. Used to construct absolute URLs in emails, OAuth redirect URIs, push notification endpoints, and the IndexNow key file path. Include the scheme; omit the trailing slash.
+</ParamField>
+
+<ParamField path="DATABASE_URL" type="string" required>
+  SQLAlchemy connection string. Defaults to `sqlite:///intelliplan.db` in the template, which is fine for local development. For production, use a Postgres URL such as `postgresql://user:pass@host/dbname`.
+</ParamField>
+
+<ParamField path="PORT" type="integer" default="3000">
+  The port Gunicorn binds to. Most PaaS hosts inject this automatically; the value in `.env` is only needed for local runs.
+</ParamField>
+
+---
+
+## Admin
+
+<ParamField path="ADMIN_EMAILS" type="string" optional>
+  Comma-separated list of email addresses that can access the admin panel at the path defined by `ADMIN_PATH`. Example: `uanirudh0811@gmail.com`. Users not on this list are rejected with 403.
+</ParamField>
+
+<ParamField path="ADMIN_PATH" type="string" default="/admin-x9k2p7">
+  The URL path for the admin panel. The default is intentionally obscure. Change it to something secret for your deployment and keep it out of public documentation.
+</ParamField>
+
+---
+
+## AI — Model Keys
+
+<ParamField path="GEMINI_API_KEY" type="string" required>
+  API key for Google Gemini, IntelliPlan's primary AI provider. Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). The free tier allows 20 requests per day on `gemini-2.5-flash`; once that quota is spent every AI feature stops unless a Groq fallback key is also set. See [AI Providers](/configuration/ai-providers) for the full fallback chain.
+</ParamField>
+
+<ParamField path="GROQ_API_KEY" type="string" required>
+  API key for Groq, IntelliPlan's fallback AI provider. Strongly recommended even though it is technically optional — without it, exhausting the Gemini free-tier quota takes down all AI features. Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
+</ParamField>
+
+<ParamField path="ANTHROPIC_API_KEY" type="string" optional>
+  API key for Anthropic Claude. Only ever called for accounts on the paid plan — leaving this unset simply drops Claude from the provider chain. If set, paid users receive Claude Sonnet for standard tasks and Claude Haiku for fast tasks.
+</ParamField>
+
+<ParamField path="PAID_USER_EMAILS" type="string" optional>
+  Comma-separated list of email addresses that receive paid-plan AI access before a formal billing system exists. Useful for beta testers and team members.
+</ParamField>
+
+<ParamField path="GROQ_AUDIO_KEY" type="string" optional>
+  A dedicated Groq API key for speech transcription (Whisper). Speech requests run against this key so that a long voice session cannot exhaust the key used for text answers. Falls back to `GROQ_API_KEY` when unset.
+</ParamField>
+
+<ParamField path="GROQ_VISUAL_API_KEY" type="string" optional>
+  A dedicated Groq API key for image/vision requests. Falls back to `GROQ_API_KEY` when unset.
+</ParamField>
+
+<ParamField path="FISH_AUDIO_KEY" type="string" optional>
+  API key for Fish Audio, which powers Plani's read-aloud voice feature. Get a key at [fish.audio](https://fish.audio). Without this key the read-aloud button is hidden.
+</ParamField>
+
+<ParamField path="POLLINATIONS_API_KEY" type="string" optional>
+  Server-side `sk_` secret key for Pollinations, used for AI image, video, and 3D generation. Obtain one at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys). This must be a secret key — a publishable `pk_` key in server code would allow anyone to spend the balance.
+</ParamField>
+
+---
+
+## AI Firewall — Rate Limits
+
+All limits are optional. When unset, the defaults shown below apply. Counters are stored in the database (not in process memory) so they survive deploys and are shared across multiple instances.
+
+<Info>
+Rate limits are per account for signed-in users, and per signed device cookie for guests. A guest keeps their identity across IP changes, so a school behind one NAT address is not treated as a single student.
+</Info>
+
+<Tabs>
+  <Tab title="Guest">
+    | Variable | Default | Description |
+    |---|---|---|
+    | `AI_GUEST_RPH` | `4` | Requests per hour |
+    | `AI_GUEST_RPD` | `8` | Requests per day |
+    | `AI_GUEST_TPD` | `12000` | Estimated tokens per day |
+    | `AI_GUEST_MAX_OUTPUT` | `1200` | Maximum output tokens per request |
+  </Tab>
+  <Tab title="Free">
+    | Variable | Default | Description |
+    |---|---|---|
+    | `AI_FREE_RPH` | `15` | Requests per hour |
+    | `AI_FREE_RPD` | `40` | Requests per day |
+    | `AI_FREE_TPD` | `60000` | Estimated tokens per day |
+    | `AI_FREE_MAX_OUTPUT` | `2600` | Maximum output tokens per request |
+  </Tab>
+  <Tab title="Paid">
+    | Variable | Default | Description |
+    |---|---|---|
+    | `AI_PAID_RPH` | `120` | Requests per hour |
+    | `AI_PAID_RPD` | `600` | Requests per day |
+    | `AI_PAID_TPD` | `1500000` | Estimated tokens per day |
+    | `AI_PAID_MAX_OUTPUT` | `4000` | Maximum output tokens per request |
+  </Tab>
+</Tabs>
+
+<ParamField path="AI_KILL_SWITCH" type="string" optional>
+  Set to `1` to disable every AI feature site-wide without a deploy. Useful for cost emergencies or provider outages. Unset or set to `0` to re-enable.
+</ParamField>
+
+---
+
+## Google OAuth + Calendar
+
+<ParamField path="GOOGLE_CLIENT_ID" type="string" required>
+  OAuth 2.0 Client ID from Google Cloud Console. Used for "Sign in with Google" and Google Calendar sync.
+</ParamField>
+
+<ParamField path="GOOGLE_CLIENT_SECRET" type="string" required>
+  OAuth 2.0 Client Secret matching `GOOGLE_CLIENT_ID`.
+</ParamField>
+
+<ParamField path="GOOGLE_REDIRECT_URI" type="string" required>
+  Must be registered in Google Cloud Console and match byte-for-byte. Default: `https://intelliplan.tech/oauth2callback`.
+</ParamField>
+
+---
+
+## Notion OAuth
+
+<ParamField path="NOTION_CLIENT_ID" type="string" optional>
+  Client ID from a **public** Notion integration created at [app.notion.com/developers/connections](https://app.notion.com/developers/connections). A public connection (not an internal integration) is required for users to authorize IntelliPlan to read their Notion workspace.
+</ParamField>
+
+<ParamField path="NOTION_CLIENT_SECRET" type="string" optional>
+  Client secret for the Notion integration.
+</ParamField>
+
+<ParamField path="NOTION_REDIRECT_URI" type="string" optional>
+  Must be registered in the Notion integration's OAuth configuration and match byte-for-byte — Notion rejects the token exchange otherwise. Default: `https://intelliplan.tech/oauth/notion/callback`. Add a second redirect URI for local development if needed (e.g. `http://localhost:5000/oauth/notion/callback`).
+</ParamField>
+
+---
+
+## Canvas OAuth
+
+<ParamField path="CANVAS_CLIENT_ID" type="string" optional>
+  Developer Key ID from Canvas (canvas.instructure.com for the public instance, or a school's own Canvas host). See `.env.example` for step-by-step instructions on registering a Developer Key.
+</ParamField>
+
+<ParamField path="CANVAS_CLIENT_SECRET" type="string" optional>
+  Developer Key secret matching `CANVAS_CLIENT_ID`.
+</ParamField>
+
+<ParamField path="CANVAS_REDIRECT_URI" type="string" optional>
+  Default: `https://intelliplan.tech/oauth/canvas/callback`. Must match the Developer Key registration exactly.
+</ParamField>
+
+<ParamField path="CANVAS_DEFAULT_BASE" type="string" default="https://canvas.instructure.com">
+  Base URL for the public Canvas instance. For schools with a self-hosted Canvas, set per-institution overrides using the pattern `CANVAS_CLIENT_ID_<HOST_UPPERCASE>` and `CANVAS_CLIENT_SECRET_<HOST_UPPERCASE>`, replacing dots and dashes with underscores.
+</ParamField>
+
+---
+
+## Google Classroom
+
+<ParamField path="GOOGLE_CLASSROOM_CLIENT_ID" type="string" optional>
+  OAuth 2.0 Client ID for Google Classroom. Separate from the Google Calendar credentials — Classroom requires its own OAuth consent screen scope.
+</ParamField>
+
+<ParamField path="GOOGLE_CLASSROOM_CLIENT_SECRET" type="string" optional>
+  Client secret for Google Classroom OAuth.
+</ParamField>
+
+---
+
+## Blackboard Learn OAuth
+
+Blackboard uses a three-legged (3LO) OAuth flow. Three distinct values are issued by the Anthology developer portal — they are not interchangeable. Run `python scripts/blackboard_doctor.py` to validate your configuration without printing any secret values.
+
+<ParamField path="BLACKBOARD_APP_KEY" type="string" optional>
+  The UUID sent as OAuth `client_id`. This is **not** the Application ID — confusing the two causes Blackboard to return `{"code":"illegalArgument","message":"invalid client_id"}` after the student has already signed in.
+</ParamField>
+
+<ParamField path="BLACKBOARD_APP_SECRET" type="string" optional>
+  The secret matching `BLACKBOARD_APP_KEY`.
+</ParamField>
+
+<ParamField path="BLACKBOARD_APPLICATION_ID" type="string" optional>
+  The UUID the school's Blackboard administrator must add under **System Admin → Integrations → REST API Integrations** with End User Access set to Yes. IntelliPlan shows this value to students whose school has not yet approved the integration so they can hand it to their admin.
+</ParamField>
+
+<ParamField path="BLACKBOARD_SCOPE" type="string" default="read offline">
+  OAuth scopes. `offline` is required — without it Blackboard issues no refresh token and every connection dies at the first expiry (approximately one hour).
+</ParamField>
+
+<ParamField path="BLACKBOARD_REDIRECT_URI" type="string" optional>
+  Default: `https://intelliplan.tech/api/lms/callback/blackboard`. Must match the developer portal registration byte-for-byte.
+</ParamField>
+
+---
+
+## Moodle
+
+<ParamField path="MOODLE_ENABLED" type="integer" default="1">
+  Set to `0` to hide the Moodle integration in the Connect screen while an institution is not ready to issue web-service tokens. Does not affect existing connections.
+</ParamField>
+
+---
+
+## Email — Resend (Preferred)
+
+<ParamField path="RESEND_API_KEY" type="string" required>
+  API key from [resend.com/api-keys](https://resend.com/api-keys). When set, Resend is used for all outgoing email. See [Email Configuration](/configuration/email) for domain setup.
+</ParamField>
+
+<ParamField path="RESEND_FROM" type="string" default="IntelliPlan <noreply@intelliplan.tech>">
+  The `From` address for all emails sent via Resend. Must use a domain verified in your Resend account. For the recommended subdomain setup, use `IntelliPlan <noreply@send.intelliplan.tech>`.
+</ParamField>
+
+---
+
+## Email — SMTP Fallback
+
+Used only when `RESEND_API_KEY` is not set.
+
+<ParamField path="SMTP_HOST" type="string" optional>
+  Hostname of the SMTP server (e.g. `smtp.gmail.com`).
+</ParamField>
+
+<ParamField path="SMTP_PORT" type="integer" default="587">
+  SMTP port. 587 (STARTTLS) is the standard for most providers.
+</ParamField>
+
+<ParamField path="SMTP_USER" type="string" optional>
+  SMTP username, usually the sending email address.
+</ParamField>
+
+<ParamField path="SMTP_PASSWORD" type="string" optional>
+  SMTP password. For Gmail, create an App Password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) — spaces are stripped automatically.
+</ParamField>
+
+<ParamField path="SMTP_FROM" type="string" optional>
+  The `From` address when using SMTP. Defaults to `SMTP_USER` when unset.
+</ParamField>
+
+---
+
+## Lifecycle Email — Reply Routing
+
+<ParamField path="MARKETING_POSTAL_ADDRESS" type="string" required>
+  Physical postal address printed in the footer of every marketing email (newsletter, feedback request). Required by CAN-SPAM §7704(a)(5). With this unset, newsletter and feedback sends refuse to run and log loudly. A PO box or registered agent's address is acceptable. See [Email Configuration](/configuration/email) for details.
+</ParamField>
+
+<ParamField path="MARKETING_REPLY_TO" type="string" required>
+  Where student replies to lifecycle emails actually land. Must be a mailbox that receives email — a send-only domain silently bounces every reply. Use a Gmail address or any working inbox until the sending domain has MX records.
+</ParamField>
+
+<ParamField path="SUPPORT_EMAIL" type="string" optional>
+  Support contact address printed in email bodies as a `mailto:` link. Falls back to `MARKETING_REPLY_TO` when unset.
+</ParamField>
+
+---
+
+## Push Notifications (VAPID)
+
+<ParamField path="VAPID_PUBLIC_KEY" type="string" required>
+  Base64url-encoded uncompressed ECDH public key. Generate once with `python vapid.py`. See [Push Notifications](/configuration/notifications) for full setup instructions.
+</ParamField>
+
+<ParamField path="VAPID_PRIVATE_KEY" type="string" required>
+  Base64url-encoded raw 32-byte ECDH private key. Treat like a password — rotating it invalidates every existing browser subscription.
+</ParamField>
+
+<ParamField path="VAPID_EMAIL" type="string" required>
+  An email address a push service can reach you at. Sent as the `sub` claim in the VAPID JWT; some services (notably FCM) reject pushes that lack it.
+</ParamField>
+
+---
+
+## Cron
+
+<ParamField path="CRON_SECRET" type="string" required>
+  Shared secret that authorizes calls to all cron endpoints (`/cron/notifications`, `/cron/send-reminders`, `/cron/lifecycle-emails`, `/cron/weekly-newsletter`). Pass as the `X-Cron-Token` or `X-Cron-Secret` header, or as a `?secret=` query parameter. Without this set, every cron endpoint returns 503 and nothing is ever delivered.
+</ParamField>
+
+---
+
+## Sentry
+
+<ParamField path="SENTRY_DSN" type="string" optional>
+  Data Source Name from your Sentry project. When set, unhandled exceptions and errors are reported to Sentry. Leaving this unset disables error reporting entirely — the application functions normally without it.
+</ParamField>
+
+---
+
+## Encryption at Rest
+
+<ParamField path="DATA_ENCRYPTION_KEY" type="string" required>
+  Fernet key used to encrypt all third-party OAuth tokens stored in the database (Canvas, Google, Notion, Blackboard, Moodle). Without it those tokens are stored in plaintext. Generate a key with:
+
+  ```bash
+  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+
+  To rotate: put the new key first, comma-separated (`new,old`). Values are decrypted with any listed key and always written with the first. Then run `scripts/encrypt_existing_tokens.py`. **Losing this key is not recoverable** — affected students must reconnect their accounts.
+</ParamField>
+
+---
+
+## reCAPTCHA
+
+<ParamField path="RECAPTCHA_SITE_KEY" type="string" optional>
+  Public site key from [google.com/recaptcha/admin](https://www.google.com/recaptcha/admin). Both `RECAPTCHA_SITE_KEY` and `RECAPTCHA_SECRET_KEY` must be set or the check remains off entirely.
+</ParamField>
+
+<ParamField path="RECAPTCHA_SECRET_KEY" type="string" optional>
+  Secret key for server-side verification. Never expose this in client-side code.
+</ParamField>
+
+<ParamField path="RECAPTCHA_VERSION" type="string" default="v2">
+  Which reCAPTCHA widget to render. `v2` draws a checkbox; `v3` is invisible and score-based. This must match the type of key you registered — a mismatch causes the widget to not appear at all.
+</ParamField>
+
+<ParamField path="RECAPTCHA_SCORE_THRESHOLD" type="number" default="0.5">
+  v3 only. Google's default is 0.5. Setting this too high causes real students on shared or VPN'd connections to be refused. Verification fails open if Google is unreachable — a Google outage will not cause an IntelliPlan outage.
+</ParamField>
+
+---
+
+## Analytics
+
+<Info>
+IntelliPlan loads no third-party analytics script in the browser. Product usage is measured server-side via PostHog, which sets no browser cookie. Microsoft Clarity was removed to honour the privacy promise made to schools. Any analytics added in future must be declared in `cookie_policy.py` and gated on consent.
+</Info>
+
+---
+
+## IndexNow
+
+<ParamField path="INDEXNOW_KEY" type="string" optional>
+  IndexNow key served at `/<key>.txt`. Used to notify participating search engines (Bing, Yandex) when public URLs change. The default value in `.env.example` is the live production key.
+</ParamField>
+
+<ParamField path="INDEXNOW_KEY_LOCATION" type="string" optional>
+  Full URL to the key file, e.g. `https://intelliplan.tech/15d38c49db0d48efa4ec2ad2635b43c9.txt`.
+</ParamField>
+
+<ParamField path="INDEXNOW_ENDPOINT" type="string" default="https://api.indexnow.org/indexnow">
+  IndexNow submission endpoint.
+</ParamField>

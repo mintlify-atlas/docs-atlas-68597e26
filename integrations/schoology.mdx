@@ -1,0 +1,75 @@
+---
+title: "Connect Schoology to IntelliPlan"
+sidebarTitle: "Schoology"
+description: "Import assignments from Schoology into IntelliPlan using your API key and secret — fetches all sections and their assignments via the Schoology REST API."
+---
+
+Schoology is a learning management system used widely across K-12 and higher education. IntelliPlan connects to Schoology using OAuth 1.0a with a personal API key and secret, which you generate directly from your Schoology account settings. No administrator action is required — any Schoology user with API access can connect in under two minutes. Once linked, IntelliPlan fetches every assignment across all your enrolled course sections and builds them into the same priority-sorted view as every other integration.
+
+## What Gets Imported
+
+When Schoology is connected, IntelliPlan imports:
+
+- **Course sections** — all sections you are enrolled in, retrieved from the `/sections` endpoint
+- **Assignments per section** — title, due date, maximum points, and section/course name for every assignment in each section
+- **Priority** — automatically computed from days until due and points possible, matching the same scale as other integrations (High / Medium / Low)
+
+Assignments more than 14 days past due are excluded from the dashboard to keep the view focused on what is currently actionable.
+
+## Getting Your API Key and Secret
+
+<Steps>
+  <Step title="Open Schoology API settings">
+    Log in to [app.schoology.com](https://app.schoology.com). Click your name in the top-right corner and choose **Settings**. Navigate to the **API** tab (sometimes listed under **Privacy** → **API Access**).
+  </Step>
+  <Step title="Generate credentials">
+    Click **Generate API Access** or **Request API Access** if you have not done so before. Schoology will generate a **Consumer Key** and **Consumer Secret** specific to your account.
+  </Step>
+  <Step title="Copy both values">
+    Copy the **Consumer Key** (this is your API key) and the **Consumer Secret**. You will enter both into IntelliPlan's connection form.
+  </Step>
+</Steps>
+
+<Note>
+  Schoology's API credentials are personal — they are tied to your student account, not to an institution-wide registration. Keep your Consumer Secret private; anyone with it can read your Schoology data.
+</Note>
+
+## Connecting in IntelliPlan
+
+Go to **Settings → Integrations → Schoology** and enter your **API Key** (Consumer Key) and **API Secret** (Consumer Secret). IntelliPlan will verify the credentials by calling the `/users/me` endpoint on the Schoology API. If the response contains a valid user ID, the connection is established and assignments are fetched immediately.
+
+## How IntelliPlan Calls the Schoology API
+
+IntelliPlan authenticates every Schoology request using OAuth 1.0a via the `requests-oauthlib` library. All requests go to the Schoology REST API base at `https://api.schoology.com/v1`. A 20-second timeout is applied to every request to prevent a slow or unresponsive Schoology server from hanging the application.
+
+The import sequence is:
+
+1. `GET /sections` — retrieve all enrolled course sections
+2. For each section: `GET /sections/{id}/assignments` — fetch all assignments in that section
+3. Parse due dates, compute priority, normalize to IntelliPlan's internal assignment shape
+
+## Priority Scoring
+
+Schoology assignments use the same priority levels as other IntelliPlan integrations:
+
+| Priority | Condition |
+|---|---|
+| **High** | Due within 3 days |
+| **Medium** | Due within 4–7 days |
+| **Low** | Due 8 or more days from now |
+
+Estimated study time is derived from the assignment's `max_points` value: points are multiplied by 1.5 and rounded up to the nearest 30-minute block, with a floor of 30 minutes.
+
+## Troubleshooting
+
+<Accordion title="'Invalid credentials' when connecting">
+  Double-check that you copied both the Consumer Key and Consumer Secret without trailing spaces. These are case-sensitive. If you have regenerated credentials in Schoology since last connecting, you will need to update them in IntelliPlan's Settings page.
+</Accordion>
+
+<Accordion title="Some course sections are not showing">
+  IntelliPlan retrieves sections from the `/sections` endpoint, which reflects your current Schoology enrollment. If you recently joined a section, try a manual sync from **Settings → Integrations → Schoology → Sync Now**. Sections that are archived or in a past grading period may not appear in the API response.
+</Accordion>
+
+<Accordion title="Assignments are missing due dates">
+  Schoology allows teachers to publish assignments without specifying a due date. IntelliPlan skips assignments with no due date when building the study schedule (since there is nothing to schedule toward), but they still appear on the dashboard as undated tasks.
+</Accordion>

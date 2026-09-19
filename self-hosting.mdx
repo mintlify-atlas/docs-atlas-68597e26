@@ -1,0 +1,341 @@
+---
+title: "Self-Host IntelliPlan on Railway or Any Server"
+sidebarTitle: "Self-Hosting"
+description: "Deploy IntelliPlan to Railway via the Procfile, run it in Docker, configure Gunicorn, generate VAPID keys, and complete the production security checklist."
+---
+
+IntelliPlan ships with everything needed for a production deployment: a `Procfile` for Railway, a `Dockerfile` for any container host, and a `gunicorn.conf.py` that reads `$PORT` at runtime so the start command stays shell-independent. This page walks through each deployment path, explains the PostgreSQL requirements, documents the production security checklist, and covers the cron jobs that power push notifications and lifecycle emails.
+
+## Railway Deployment
+
+Railway is the recommended hosting platform. It provisions a PostgreSQL database, injects `DATABASE_URL` automatically, and the `Procfile` tells it exactly how to start the app.
+
+<Steps>
+  <Step title="Fork and connect the repository">
+    Fork [github.com/UAnirudh/IntelliPlan](https://github.com/UAnirudh/IntelliPlan) to your GitHub account, then create a new Railway project and connect the forked repository. Railway detects the `Procfile` and uses it as the start command.
+
+    The `Procfile` contains:
+    ```
+    web: python -m gunicorn App:app -c gunicorn.conf.py
+    ```
+
+    Using `python -m gunicorn` instead of the `gunicorn` console script bypasses any virtualenv shebang issues that caused Nixpacks-built containers to crash at start.
+  </Step>
+
+  <Step title="Add a PostgreSQL plugin">
+    In your Railway project, click **+ New** → **Database** → **PostgreSQL**. Railway injects `DATABASE_URL` as an environment variable that Flask-SQLAlchemy picks up automatically — no extra configuration needed.
+  </Step>
+
+  <Step title="Set required environment variables">
+    In the Railway service's **Variables** tab, add at minimum:
+
+    ```env
+    SECRET_KEY=<long-random-string>
+    GEMINI_API_KEY=<your-gemini-key>
+    APP_BASE_URL=https://your-app.railway.app
+    ```
+
+    `DATABASE_URL` is already set by the PostgreSQL plugin. Add `GROQ_API_KEY` as well — the Gemini free tier allows only 20 requests per day, and without a fallback every AI feature stops when that quota runs out.
+  </Step>
+
+  <Step title="Add production security variables">
+    These variables are optional at boot time but **required for a production deployment**:
+
+    ```env
+    DATA_ENCRYPTION_KEY=<fernet-key>
+    CRON_SECRET=<random-string>
+    ```
+
+    Generate `DATA_ENCRYPTION_KEY` with:
+    ```bash
+    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    ```
+
+    Generate `CRON_SECRET` with:
+    ```bash
+    python -c "import secrets; print(secrets.token_hex(32))"
+    ```
+  </Step>
+
+  <Step title="Deploy">
+    Push a commit (or trigger a manual deploy in Railway). Railway builds the service, runs the Gunicorn process on the injected `$PORT`, and your app is live. The `gunicorn.conf.py` reads `$PORT` in Python, so the bind address is always correct regardless of how Railway passes the variable.
+  </Step>
+</Steps>
+
+## Docker Deployment
+
+IntelliPlan includes a `Dockerfile` for any container host that supports OCI images (Fly.io, Render, DigitalOcean App Platform, a bare VPS with Docker installed, etc.).
+
+```dockerfile title="Dockerfile"
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Dependencies layer cached separately from source code
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+COPY . .
+RUN mkdir -p instance uploads
+
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["python", "-m", "gunicorn", "App:app", "-c", "gunicorn.conf.py"]
+```
+
+Build and run locally:
+
+```bash
+docker build -t intelliplan .
+docker run -p 8080:8080 \
+  -e SECRET_KEY=your-secret-key \
+  -e GEMINI_API_KEY=your-gemini-key \
+  -e DATABASE_URL=postgresql://user:pass@host:5432/intelliplan \
+  intelliplan
+```
+
+<Warning>
+  `.git` is excluded from the Docker build context. The weekly newsletter's "what changed" section is built from a committed changelog snapshot. Refresh it before each deploy or that section goes stale:
+
+  ```bash
+  python scripts/refresh_changelog.py
+  ```
+</Warning>
+
+## Gunicorn Configuration
+
+`gunicorn.conf.py` controls the process model. The defaults are conservative and suitable for a Railway starter plan:
+
+```python title="gunicorn.conf.py"
+import os
+
+bind = f"0.0.0.0:{os.environ.get('PORT', '8080')}"
+workers = int(os.environ.get("WEB_CONCURRENCY", "4"))
+timeout = 120
+max_requests = 500
+max_requests_jitter = 50
+```
+
+Tune `WEB_CONCURRENCY` via an environment variable to match your plan's available CPU. `max_requests` + `max_requests_jitter` recycles workers periodically to prevent memory leaks from accumulating across long-lived processes.
+
+## Database: PostgreSQL vs SQLite
+
+| Scenario | Recommended database |
+|---|---|
+| Local development | `sqlite:///intelliplan.db` — zero setup, file-based |
+| Railway / any production | PostgreSQL via `DATABASE_URL=postgresql://...` |
+| Docker on a VPS | PostgreSQL container or managed service |
+
+Flask-Session uses a SQLAlchemy-backed store so that session state survives Railway container restarts between deploys. This requires a persistent database — SQLite on a container's ephemeral filesystem will lose all sessions on every restart.
+
+<Note>
+  The `psycopg2-binary` package in `requirements.txt` provides the PostgreSQL driver. No separate installation is needed; it ships as a binary wheel for all supported platforms.
+</Note>
+
+## Generating VAPID Keys for Push Notifications
+
+Browser push notifications require a VAPID key pair generated **once** and stored permanently. IntelliPlan ships `vapid.py` to produce them in the correct format:
+
+```bash
+python vapid.py
+```
+
+The script prints three lines ready to paste into Railway's Variables tab or your `.env`:
+
+```env
+VAPID_PUBLIC_KEY=<base64url-encoded-public-key>
+VAPID_PRIVATE_KEY=<base64url-encoded-private-key>
+VAPID_EMAIL=you@yourdomain.com
+```
+
+<Warning>
+  **Rotating `VAPID_PRIVATE_KEY` invalidates every existing browser subscription.** Every student who previously enabled notifications would need to re-enable them. Generate this key pair once, store it in a secret manager, and never regenerate it casually. Treat `VAPID_PRIVATE_KEY` like a database password.
+</Warning>
+
+`VAPID_EMAIL` must be an address a push service can actually reach you at — it is sent as the `sub` claim in the VAPID JWT, and some push services reject deliveries without it.
+
+## Encryption at Rest
+
+`DATA_ENCRYPTION_KEY` encrypts the third-party OAuth tokens IntelliPlan stores (Canvas, Google, Notion, Blackboard, Moodle). Without it, those tokens are kept in plaintext — a database backup hands over live access to every connected student account.
+
+```bash
+# Generate a Fernet key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+<Note>
+  **Rotating `DATA_ENCRYPTION_KEY` invalidates all existing stored tokens.** Affected students must reconnect their school platform accounts. To rotate safely, put the new key first in a comma-separated list; IntelliPlan reads tokens with any listed key and always writes with the first. Then re-encrypt existing tokens:
+
+  ```bash
+  python scripts/encrypt_existing_tokens.py
+  ```
+
+  Keep this key in a secret store — never in git.
+</Note>
+
+## Production Checklist
+
+Before sending IntelliPlan live to real students, confirm each item below:
+
+<AccordionGroup>
+  <Accordion title="Security variables">
+    | Variable | Purpose | How to generate |
+    |---|---|---|
+    | `SECRET_KEY` | Flask session signing | `python -c "import secrets; print(secrets.token_hex(32))"` |
+    | `DATA_ENCRYPTION_KEY` | Encrypts stored OAuth tokens | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+    | `CRON_SECRET` | Authenticates cron endpoint calls | `python -c "import secrets; print(secrets.token_hex(32))"` |
+    | `VAPID_PRIVATE_KEY` | Signs Web Push notifications | `python vapid.py` |
+  </Accordion>
+
+  <Accordion title="AI keys">
+    | Variable | Required? | Notes |
+    |---|---|---|
+    | `GEMINI_API_KEY` | Yes | Primary model for all AI features |
+    | `GROQ_API_KEY` | Strongly recommended | Fallback when Gemini quota is exhausted |
+    | `ANTHROPIC_API_KEY` | Optional | Paid-plan model only |
+  </Accordion>
+
+  <Accordion title="Database">
+    - `DATABASE_URL` must point to a persistent PostgreSQL instance.
+    - Flask-Session requires a persistent database — SQLite on an ephemeral container filesystem loses all sessions on restart.
+    - The `psycopg2-binary` driver is already in `requirements.txt`.
+  </Accordion>
+
+  <Accordion title="App base URL">
+    Set `APP_BASE_URL` to your public domain (e.g. `https://intelliplan.tech`). OAuth redirect URIs for Google, Canvas, Notion, and Blackboard are constructed from this value. A mismatch causes OAuth callbacks to fail silently with `invalid_redirect_uri`.
+  </Accordion>
+
+  <Accordion title="Error tracking (optional but recommended)">
+    Set `SENTRY_DSN` to a Sentry project DSN to capture unhandled exceptions in production. The Flask Sentry integration is already wired in `App.py` and activates automatically when the variable is present.
+  </Accordion>
+</AccordionGroup>
+
+## Cron Jobs
+
+IntelliPlan has two families of cron endpoints. Both accept either the `X-Cron-Secret` or `X-Cron-Token` header, plus a `?secret=` query parameter fallback.
+
+### Push Notifications
+
+The notification outbox must be drained every few minutes. Point a scheduler at:
+
+```bash
+curl -X POST https://your-domain/cron/notifications \
+     -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+Railway schedule expression: `*/5 * * * *` (every 5 minutes). The endpoint deduplicates on a `UNIQUE` constraint and claims rows before sending, so overlapping runs never double-send.
+
+A `401` response means the secret is missing or wrong. A `503` means `CRON_SECRET` is unset. Both indicate the endpoint is working — the issue is in the configuration.
+
+### Lifecycle Emails
+
+Three lifecycle emails are available: a welcome email (transactional), a feedback request (14-day opt-in users), and a weekly newsletter (opt-in, auto-generated). All require `RESEND_API_KEY` and `MARKETING_POSTAL_ADDRESS` to be set.
+
+**Daily lifecycle sweep** — runs the welcome email and feedback-request logic:
+```bash
+# Railway schedule: 0 16 * * *  (daily at 16:00 UTC / ~9am PT)
+curl -X POST https://your-domain/cron/lifecycle-emails \
+     -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+**Weekly newsletter** — auto-generates and sends to opt-in subscribers every Thursday:
+```bash
+# Railway schedule: 0 16 * * 4  (Thursdays at 16:00 UTC)
+curl -X POST https://your-domain/cron/weekly-newsletter \
+     -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+<Warning>
+  The weekly newsletter sends to the full marketing list with no manual review step. It is protected by per-ISO-week deduplication (a repeat cron fire is a no-op), the eligibility gate (`is_marketing_eligible`), and a `MARKETING_POSTAL_ADDRESS` check. **Do not point the Thursday cron at a production URL until you have verified `RESEND_FROM` against a real sending domain in the Resend dashboard.**
+</Warning>
+
+Preview this week's newsletter before it goes out:
+
+```bash
+curl -X POST https://your-domain/api/admin/newsletter/weekly-preview
+```
+
+### Assignment Reminders
+
+```bash
+# Railway schedule: */5 * * * *  (every 5 minutes, same job as notifications)
+curl -X POST https://your-domain/cron/send-reminders \
+     -H "X-Cron-Secret: $CRON_SECRET"
+```
+
+## Environment Variables Reference
+
+The table below covers every variable needed for a complete production deployment. All are optional at boot time except `SECRET_KEY`, `GEMINI_API_KEY`, and `DATABASE_URL`.
+
+<Expandable title="Full production environment variables">
+
+```env title=".env (production)"
+# ── Core ─────────────────────────────────────────────────────────
+SECRET_KEY=<long-random-string>
+APP_BASE_URL=https://your-domain.com
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+PORT=8080
+
+# ── AI ───────────────────────────────────────────────────────────
+GEMINI_API_KEY=
+GROQ_API_KEY=
+ANTHROPIC_API_KEY=           # Paid-plan model only; omit to disable
+
+# ── Security ─────────────────────────────────────────────────────
+DATA_ENCRYPTION_KEY=         # Fernet key — encrypts stored OAuth tokens
+CRON_SECRET=                 # Authenticates all cron endpoint calls
+RECAPTCHA_SITE_KEY=          # Google reCAPTCHA (v2 or v3)
+RECAPTCHA_SECRET_KEY=
+RECAPTCHA_VERSION=v2
+
+# ── Push Notifications (VAPID) ───────────────────────────────────
+VAPID_PUBLIC_KEY=            # Generate with: python vapid.py
+VAPID_PRIVATE_KEY=
+VAPID_EMAIL=
+
+# ── Google OAuth (Calendar + Classroom) ─────────────────────────
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=https://your-domain.com/oauth2callback
+GOOGLE_CLASSROOM_CLIENT_ID=
+GOOGLE_CLASSROOM_CLIENT_SECRET=
+
+# ── Canvas OAuth ─────────────────────────────────────────────────
+CANVAS_CLIENT_ID=
+CANVAS_CLIENT_SECRET=
+CANVAS_REDIRECT_URI=https://your-domain.com/oauth/canvas/callback
+CANVAS_DEFAULT_BASE=https://canvas.instructure.com
+
+# ── Notion OAuth ─────────────────────────────────────────────────
+NOTION_CLIENT_ID=
+NOTION_CLIENT_SECRET=
+NOTION_REDIRECT_URI=https://your-domain.com/oauth/notion/callback
+
+# ── Blackboard Learn OAuth ───────────────────────────────────────
+BLACKBOARD_APP_KEY=
+BLACKBOARD_APP_SECRET=
+BLACKBOARD_APPLICATION_ID=
+BLACKBOARD_SCOPE=read offline
+BLACKBOARD_REDIRECT_URI=https://your-domain.com/api/lms/callback/blackboard
+
+# ── Email (Resend) ───────────────────────────────────────────────
+RESEND_API_KEY=
+RESEND_FROM=IntelliPlan <noreply@send.your-domain.com>
+MARKETING_POSTAL_ADDRESS=    # Required for CAN-SPAM compliance
+MARKETING_REPLY_TO=
+SUPPORT_EMAIL=
+
+# ── Error Tracking ───────────────────────────────────────────────
+SENTRY_DSN=
+
+# ── Analytics ───────────────────────────────────────────────────
+POSTHOG_API_KEY=             # Server-side only; no browser cookie
+```
+
+</Expandable>

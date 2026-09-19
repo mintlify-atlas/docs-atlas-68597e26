@@ -1,72 +1,115 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "IntelliPlan",
+  "theme": "almond",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#63a5d2",
+    "light": "#111212",
+    "dark": "#e2e8ed"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/520ec573-c5c9-4089-99ff-87bbb47b50d0.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/9e9dc9ba-823c-4430-8257-e77e098cb980.svg",
+    "dark": "https://media.brand.dev/9e9dc9ba-823c-4430-8257-e77e098cb980.svg"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/UAnirudh/IntelliPlan"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/UAnirudh/IntelliPlan"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "self-hosting"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/dashboard",
+              "features/scheduler",
+              "features/study-and-learn",
+              "features/plani-tutor",
+              "features/grades"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/overview",
+              "integrations/canvas",
+              "integrations/google-classroom",
+              "integrations/studentvue",
+              "integrations/schoology",
+              "integrations/blackboard",
+              "integrations/moodle",
+              "integrations/google-calendar",
+              "integrations/notion"
+            ]
+          },
+          {
+            "group": "Platform Clients",
+            "pages": [
+              "clients/chrome-extension",
+              "clients/mobile-app",
+              "clients/desktop-app"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/ai-providers",
+              "configuration/notifications",
+              "configuration/email"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/assignments",
+              "api/schedule",
+              "api/tutor",
+              "api/study",
+              "api/grades",
+              "api/streak",
+              "api/integrations-api"
+            ]
+          },
+          {
+            "group": "Developer Tools",
+            "pages": [
+              "api/api-keys",
+              "api/mcp-server"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

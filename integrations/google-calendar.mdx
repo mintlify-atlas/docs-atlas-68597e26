@@ -1,0 +1,146 @@
+---
+title: "Export Study Schedules to Google Calendar"
+sidebarTitle: "Google Calendar"
+description: "Export AI-generated IntelliPlan study schedules to Google Calendar in one click via OAuth 2.0 with PKCE — every study block becomes a real calendar event."
+---
+
+Once IntelliPlan's AI scheduler generates a study plan for the week, you can push the entire schedule to Google Calendar with a single click. Every study block — including the assignment name, estimated duration, and scheduled start time — becomes a real Google Calendar event visible alongside your other commitments. The export uses OAuth 2.0 with PKCE (Proof Key for Code Exchange) for a secure authorization flow that does not require storing a client secret in the browser. After a one-time authorization, IntelliPlan writes calendar events on your behalf and the connection persists across sessions.
+
+## What Gets Exported
+
+When you click **Export to Google Calendar**, IntelliPlan creates calendar events for:
+
+- **Each study block** in the generated schedule — with the assignment or subject name as the event title
+- **Break blocks** — scheduled rest periods are included as short calendar events so the plan renders as a complete picture of your study day
+- **Multi-day schedules** — all days in the generated plan are exported in a single operation
+
+Events are created with the `https://www.googleapis.com/auth/calendar.events` scope, which means IntelliPlan can create and manage events but cannot read or modify events created by other applications.
+
+## Environment Variables
+
+```env title=".env"
+# Google OAuth — used for both Google Calendar and login
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=https://intelliplan.tech/oauth2callback
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 client ID from Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 client secret |
+| `GOOGLE_REDIRECT_URI` | Yes | Must match the authorized redirect URI in Google Cloud Console |
+
+<Note>
+  These credentials are shared between Google Calendar export and Google account login. They are separate from `GOOGLE_CLASSROOM_CLIENT_ID` / `GOOGLE_CLASSROOM_CLIENT_SECRET`, which are used only for the Google Classroom LMS integration.
+</Note>
+
+## OAuth 2.0 with PKCE
+
+IntelliPlan implements the full OAuth 2.0 authorization code flow with PKCE for Google Calendar. PKCE (Proof Key for Code Exchange) protects the authorization code flow against interception attacks by binding the authorization request to the token exchange using a cryptographic challenge:
+
+<Steps>
+  <Step title="PKCE challenge generation">
+    IntelliPlan generates a cryptographically random `code_verifier` using `secrets.token_urlsafe(64)`, then computes a SHA-256 hash of it as the `code_challenge`:
+    ```python
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b'=').decode()
+    ```
+  </Step>
+  <Step title="Authorization redirect">
+    The student is redirected to Google's authorization endpoint. The `code_challenge` and `code_challenge_method=S256` are included in the URL alongside the requested scopes and `state` parameter:
+    ```
+    https://accounts.google.com/o/oauth2/v2/auth
+      ?client_id=<GOOGLE_CLIENT_ID>
+      &redirect_uri=<GOOGLE_REDIRECT_URI>
+      &response_type=code
+      &scope=https://www.googleapis.com/auth/calendar.events openid ...
+      &access_type=offline
+      &prompt=consent
+      &code_challenge=<challenge>
+      &code_challenge_method=S256
+    ```
+  </Step>
+  <Step title="Code exchange with verifier">
+    After Google redirects back with a `code`, IntelliPlan exchanges it at Google's token endpoint with the original `code_verifier` included:
+    ```python
+    data = {
+        "code": code,
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+        "code_verifier": code_verifier,
+    }
+    ```
+  </Step>
+  <Step title="Token storage">
+    Access and refresh tokens are stored encrypted in the database. The `access_type=offline` and `prompt=consent` parameters ensure a refresh token is always issued.
+  </Step>
+</Steps>
+
+## Requested Scopes
+
+| Scope | Purpose |
+|---|---|
+| `https://www.googleapis.com/auth/calendar.events` | Create and manage calendar events (write access) |
+| `openid` | Identity verification |
+| `https://www.googleapis.com/auth/userinfo.email` | Read the user's email address |
+| `https://www.googleapis.com/auth/userinfo.profile` | Read the user's display name |
+
+## Exporting a Schedule
+
+After generating a study schedule in the AI Scheduler, click **Export to Google Calendar**. IntelliPlan calls:
+
+```http
+POST /calendar/export
+Content-Type: application/json
+
+{
+  "schedule": { ... }
+}
+```
+
+This endpoint reads the stored Google OAuth tokens, constructs Google Calendar event objects for each study block, and calls the Google Calendar API v3 to insert them into the student's primary calendar. Saving a generated schedule separately also works:
+
+```http
+POST /schedule/save
+GET  /schedule/saved
+```
+
+Saved schedules persist across sessions, so a student can generate a plan on Monday and export it to Google Calendar later in the week without regenerating.
+
+## Setting Up Google Cloud Credentials
+
+<Steps>
+  <Step title="Create or open a Google Cloud project">
+    Go to [console.cloud.google.com](https://console.cloud.google.com) and select your IntelliPlan project.
+  </Step>
+  <Step title="Enable the Google Calendar API">
+    Navigate to **APIs & Services → Library**, search for **Google Calendar API**, and enable it.
+  </Step>
+  <Step title="Configure the OAuth consent screen">
+    Under **APIs & Services → OAuth consent screen**, add `https://www.googleapis.com/auth/calendar.events` to the scopes list.
+  </Step>
+  <Step title="Create OAuth 2.0 credentials">
+    Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**. Set **Application type** to **Web application** and add your redirect URI to the authorized list.
+  </Step>
+  <Step title="Copy to .env">
+    Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from the credential detail view.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<Accordion title="'redirect_uri_mismatch' error during authorization">
+  The `GOOGLE_REDIRECT_URI` value in your `.env` must match one of the authorized redirect URIs in Google Cloud Console exactly — including the scheme, domain, port, and path. For local development, add `http://localhost:3000/oauth2callback` as an additional authorized URI in Google Cloud Console.
+</Accordion>
+
+<Accordion title="No refresh token is returned">
+  If the `GOOGLE_REFRESH_TOKEN` is missing after authorization, it is usually because `access_type=offline` and `prompt=consent` were not both set during the authorization request. IntelliPlan always sends both. If you see this in a self-hosted instance, verify that `get_auth_url` is being called with `purpose="calendar"` and not `purpose="login"`.
+</Accordion>
+
+<Accordion title="Events appear on the wrong Google account">
+  The `prompt=select_account` parameter is used for login flows, while Calendar export uses `prompt=consent` to always show the account chooser. If events are going to the wrong calendar, disconnect the Google Calendar integration from Settings and reconnect, choosing the correct Google account during authorization.
+</Accordion>

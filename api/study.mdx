@@ -1,0 +1,304 @@
+---
+title: "Study Content Generation API: Flashcards and Quizzes"
+sidebarTitle: "Study"
+description: "Generate flashcards and quiz questions from study notes, AI-evaluate student answers, extract text from images, and summarize uploaded course notes."
+---
+
+The Study API provides four AI-powered content generation endpoints that turn raw course material into active learning tools. Paste or upload notes, and the AI generates flashcards, key concepts, and practice quiz questions — all in one call. A separate evaluation endpoint semantically scores a student's answer against the correct one, applying lenient partial-credit logic that rewards genuine understanding even when phrasing differs. An image analysis endpoint extracts all text, formulas, diagrams, and captions from a photo of handwritten notes or a textbook page. Finally, per-note summarization condenses uploaded documents into bullet points and key takeaways. These endpoints power the Study & Learn section of IntelliPlan and are available to any authenticated session.
+
+<Note>
+The study endpoints are web-layer routes (not under `/api/v1/`) and use session-based authentication. They are available to any logged-in IntelliPlan user. Guest users have access to a limited quota (capped generations and fewer questions).
+</Note>
+
+---
+
+## POST /study/generate — Generate Flashcards and Quiz
+
+Takes a block of study text and returns a structured study set: a title, 5–8 key concepts with definitions, and up to 20 practice quiz questions across three types — recall, conceptual, and short-answer. Content is capped at 20,000 characters; longer text is silently trimmed to that limit.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/study/generate \
+      -H "Content-Type: application/json" \
+      -d '{
+        "content": "Mitosis is the process of cell division in which a single cell divides into two genetically identical daughter cells. It consists of four main phases: prophase, metaphase, anaphase, and telophase (PMAT). During prophase, chromatin condenses into visible chromosomes and the spindle begins to form. In metaphase, chromosomes align at the cell equator. During anaphase, sister chromatids are pulled to opposite poles. Telophase results in two nuclei forming, followed by cytokinesis.",
+        "num_questions": 8,
+        "mode": "exam"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "status": "ok",
+      "data": {
+        "title": "Mitosis Cell Division",
+        "mode": "exam",
+        "key_concepts": [
+          {
+            "term": "Mitosis",
+            "definition": "Cell division producing two genetically identical daughter cells from one parent cell."
+          },
+          {
+            "term": "Prophase",
+            "definition": "First phase of mitosis: chromatin condenses into chromosomes and the spindle apparatus forms."
+          },
+          {
+            "term": "Metaphase",
+            "definition": "Phase where chromosomes align along the cell equator (metaphase plate)."
+          },
+          {
+            "term": "Anaphase",
+            "definition": "Phase where sister chromatids are pulled to opposite poles of the cell."
+          },
+          {
+            "term": "Telophase",
+            "definition": "Final mitotic phase: two nuclei form and cytokinesis divides the cytoplasm."
+          }
+        ],
+        "questions": [
+          {
+            "id": 1,
+            "type": "recall",
+            "question": "What is the correct order of the four phases of mitosis?",
+            "answer": "Prophase, Metaphase, Anaphase, Telophase — often remembered as PMAT.",
+            "hint": "PMAT"
+          },
+          {
+            "id": 2,
+            "type": "conceptual",
+            "question": "Why is it important that mitosis produces genetically identical daughter cells?",
+            "answer": "Genetic identity ensures that every cell in the body carries the same DNA instructions, which is essential for organism development, tissue repair, and normal cell function.",
+            "hint": "identity"
+          }
+        ]
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Request Body
+
+<ParamField body="content" type="string" required>
+  The study material to generate content from. Plain text, markdown, or extracted note text. Maximum 20,000 characters (text beyond this limit is trimmed).
+</ParamField>
+
+<ParamField body="num_questions" type="integer" default={8}>
+  Number of quiz questions to generate. Minimum `1`, maximum `20`. Defaults to `8`. Values outside this range are clamped automatically.
+</ParamField>
+
+<ParamField body="mode" type="string" default="casual">
+  Study mode intensity. Accepted values: `"casual"`, `"exam"`, and other configured modes. `"casual"` is lighter; `"exam"` generates harder, more comprehensive questions. Guest users are locked to `"casual"`.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="data.title" type="string">
+  A short (5 words max) topic title inferred from the content.
+</ResponseField>
+
+<ResponseField name="data.key_concepts" type="array">
+  5–8 key concepts extracted from the material. Each entry has a `term` (string) and `definition` (1–2 sentence string).
+</ResponseField>
+
+<ResponseField name="data.questions" type="array">
+  Array of quiz question objects.
+
+  <Expandable title="Question object fields">
+    <ResponseField name="id" type="integer">Sequential question number.</ResponseField>
+    <ResponseField name="type" type="string">Question type: `"recall"`, `"conceptual"`, or `"short-answer"`.</ResponseField>
+    <ResponseField name="question" type="string">The question text.</ResponseField>
+    <ResponseField name="answer" type="string">The comprehensive correct answer (2–4 sentences).</ResponseField>
+    <ResponseField name="hint" type="string">An optional one-word memory hint.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="data.mode" type="string">
+  The study mode actually used for this generation (may differ from the requested mode if the user was downgraded from the guest limit).
+</ResponseField>
+
+---
+
+## POST /study/evaluate — AI-Evaluate a Quiz Answer
+
+Semantically evaluates a student's free-text answer against the correct answer. The evaluation is intentionally lenient — it rewards approximate understanding, partial credit for capturing the main idea, and deducts for high-confidence wrong answers. The engine combines LLM semantic scoring with keyword overlap and sequence similarity checks so that a student who genuinely understands the concept is never penalized for imperfect phrasing.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/study/evaluate \
+      -H "Content-Type: application/json" \
+      -d '{
+        "question": "What happens during metaphase of mitosis?",
+        "correct_answer": "During metaphase, chromosomes align along the cell equator (metaphase plate) with spindle fibers attached to each centromere.",
+        "user_answer": "The chromosomes line up in the middle of the cell",
+        "confidence": "high"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "status": "ok",
+      "evaluation": {
+        "verdict": "correct",
+        "score": 78,
+        "what_was_right": "You correctly identified that chromosomes align in the middle of the cell — that is the core of metaphase!",
+        "what_was_missing": "The full answer mentions the metaphase plate specifically and spindle fiber attachment to centromeres.",
+        "critique": "Your answer captures the essential concept of chromosome alignment. Adding the terms 'metaphase plate' and 'spindle fibers' would make it exam-ready.",
+        "memory_anchor": "Meta = middle — metaphase is when chromosomes meet in the middle.",
+        "better_answer": "Chromosomes align at the metaphase plate (cell equator) with spindle fibers attached to each centromere.",
+        "points_earned": 15
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Request Body
+
+<ParamField body="question" type="string" required>
+  The quiz question text.
+</ParamField>
+
+<ParamField body="correct_answer" type="string" required>
+  The model correct answer for the question.
+</ParamField>
+
+<ParamField body="user_answer" type="string" required>
+  The student's free-text response to evaluate.
+</ParamField>
+
+<ParamField body="confidence" type="string" default="medium">
+  The student's self-reported confidence level. Accepted values: `"high"`, `"medium"`, `"low"`. Confidence modifies the points multiplier — a correct high-confidence answer earns more; a wrong high-confidence answer earns less. Defaults to `"medium"`.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="evaluation.verdict" type="string">
+  Outcome: `"correct"`, `"partial"`, or `"incorrect"`. The engine is lenient — if the student captures the main idea, the verdict is at least `"partial"`.
+</ResponseField>
+
+<ResponseField name="evaluation.score" type="integer">
+  Numeric score from 0–100. Correct answers score 70–100; partial 40–69; incorrect 0–39.
+</ResponseField>
+
+<ResponseField name="evaluation.what_was_right" type="string">
+  Encouraging feedback on what the student got correct.
+</ResponseField>
+
+<ResponseField name="evaluation.what_was_missing" type="string">
+  Precise description of any gaps or misconceptions.
+</ResponseField>
+
+<ResponseField name="evaluation.critique" type="string">
+  2–3 sentence constructive critique of the answer.
+</ResponseField>
+
+<ResponseField name="evaluation.memory_anchor" type="string">
+  A vivid mnemonic or analogy to help the student remember the concept.
+</ResponseField>
+
+<ResponseField name="evaluation.better_answer" type="string">
+  A concise ideal answer the student can use as a reference.
+</ResponseField>
+
+<ResponseField name="evaluation.points_earned" type="integer">
+  Gamification points awarded for this answer (1–15), factoring in verdict and confidence.
+</ResponseField>
+
+---
+
+## POST /study/analyze-image — Extract Content from Image
+
+Uploads an image of a textbook page, whiteboard, handwritten notes, diagram, or any educational material and returns all extracted text, formulas, tables, and visual element descriptions as clean study-ready text. The AI vision model preserves mathematical notation, describes diagrams, and retains all labels and captions.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL — multipart upload"
+    curl -X POST https://intelliplan.tech/study/analyze-image \
+      -F "image=@/path/to/notes_photo.jpg"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "status": "ok",
+      "text": "Chapter 3: Cell Division\n\nMitosis Phases:\n1. Prophase — chromatin condenses, spindle forms\n2. Metaphase — chromosomes align at cell equator (metaphase plate)\n3. Anaphase — sister chromatids pulled to opposite poles\n4. Telophase — nuclear envelope reforms, cytokinesis begins\n\nFormula: 2n → 2 × n (diploid → two diploid daughter cells)\n\n[Diagram: Circular cell showing chromosomes aligned at center with arrows indicating spindle fiber pull toward poles]",
+      "char_count": 412
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Request
+
+Send a `multipart/form-data` POST with the image file in a field named `image`.
+
+<ParamField body="image" type="file" required>
+  The image file to analyze. Supported types: `image/jpeg`, `image/png`, `image/webp`, `image/gif`. Maximum file size: 10 MB.
+</ParamField>
+
+### Response Fields
+
+<ResponseField name="text" type="string">
+  All extracted educational content from the image, formatted as clean readable text. Mathematical formulas are preserved; visual elements are described in square brackets.
+</ResponseField>
+
+<ResponseField name="char_count" type="integer">
+  Character count of the extracted text, useful for deciding whether to pass the result directly to `/study/generate`.
+</ResponseField>
+
+<Tip>
+  After extracting text with `/study/analyze-image`, pipe the returned `text` field directly into `POST /study/generate` as the `content` value to immediately generate flashcards and quiz questions from your photo.
+</Tip>
+
+---
+
+## POST /notes/\{id\}/summarize — Summarize Uploaded Notes
+
+Generates an AI summary of a previously uploaded course note file. The summary is structured as 5–8 bullet points plus a short "Key takeaways" section. The generated summary is cached on the note record — subsequent calls to this endpoint will regenerate it if the note's text content has changed.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/notes/42/summarize
+```
+
+<ParamField path="id" type="integer" required>
+  The integer ID of the course note to summarize. Note must belong to the authenticated user.
+</ParamField>
+
+```json title="200 OK"
+{
+  "status": "ok",
+  "summary": "• Mitosis produces two genetically identical daughter cells from one parent cell.\n• The four phases are Prophase, Metaphase, Anaphase, and Telophase (PMAT).\n• Prophase: chromatin condenses, spindle forms.\n• Metaphase: chromosomes align at the metaphase plate.\n• Anaphase: sister chromatids are pulled to opposite poles.\n• Telophase: nuclear envelope reforms; cytokinesis follows.\n• Mitosis maintains the diploid chromosome number (2n → 2 × 2n).\n\n**Key takeaways:** Mitosis is for growth and repair — not for reproduction. Each phase has a distinct and testable landmark event."
+}
+```
+
+<ResponseField name="summary" type="string">
+  The AI-generated summary as a markdown-formatted string with bullet points and a Key takeaways section.
+</ResponseField>
+
+<Warning>
+  This endpoint returns HTTP `400` if the note has no extracted text content (e.g. if the file failed to parse during upload). Make sure the note was successfully uploaded and text-extracted before calling this endpoint.
+</Warning>
+
+---
+
+## Image-to-Flashcards Workflow
+
+<Steps>
+  <Step title="Photo to text">
+    Upload a photo of handwritten notes or a textbook page to `POST /study/analyze-image`. Receive clean extracted text.
+  </Step>
+  <Step title="Text to study set">
+    Pass the extracted `text` to `POST /study/generate` as the `content` field. The AI returns key concepts and quiz questions.
+  </Step>
+  <Step title="Quiz the student">
+    Present the generated questions to the student one at a time using your UI.
+  </Step>
+  <Step title="Evaluate answers">
+    For each answered question, call `POST /study/evaluate` with the `question`, `correct_answer`, `user_answer`, and the student's `confidence` level. Display the feedback and memory anchor.
+  </Step>
+</Steps>

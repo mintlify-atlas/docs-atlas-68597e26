@@ -1,0 +1,162 @@
+---
+title: "AI Scheduler: Build Your Weekly Study Plan"
+sidebarTitle: "Scheduler"
+description: "Generate a personalised multi-day study plan from your assignments. Set your available hours, pick a study time, and export directly to Google Calendar."
+---
+
+The AI Scheduler turns your assignment list into a concrete, day-by-day study plan in seconds. Tell IntelliPlan which hours you are free and when you prefer to study, and the AI carves out focused work blocks — complete with built-in breaks — across the days leading up to each deadline. Schedules persist across sessions and export to Google Calendar with a single click. When the primary AI is unreachable, a fallback scheduler keeps things running without any interruption to you.
+
+## How It Works
+
+IntelliPlan's scheduler has two layers working together:
+
+1. **`scheduler_engine.py`** — the personalisation layer. It shapes the AI's raw block list into a plan that fits *your* real week: actual free windows from your availability settings, block lengths tuned to your completion history, and daily load that respects how much you've historically checked off.
+2. **`scheduler_depth.py`** — the depth layer. It handles three things the core engine could not see: exam-specific spaced revision plans, flashcard review time budgeted from your SRS queue, and an honest overload report when the week is too short.
+
+<Note>
+  Schedules are shaped by your real history. The engine reads past `TaskFeedback` records and completed `SavedSchedule` progress to tune block length and daily load — not a generic formula.
+</Note>
+
+## Generating a Schedule
+
+<Steps>
+  <Step title="Open the Scheduler">
+    Navigate to **Scheduler** in the left sidebar.
+  </Step>
+  <Step title="Set your available hours">
+    For each day of the week, toggle the time slots you are actually free: **Morning** (6 am – 12 pm), **Afternoon** (12 pm – 5 pm), and **Evening** (5 pm – 10 pm). You can also specify weekly commitments (clubs, sports, work) that should be blocked out.
+  </Step>
+  <Step title="Choose your preferred study time">
+    Select whether you study best in the morning, afternoon, or evening. The scheduler steers your hardest work into that slot.
+  </Step>
+  <Step title="Generate">
+    Click **Generate Schedule**. IntelliPlan calls `/generate_schedule` with your assignments and preferences and returns a multi-day plan within seconds.
+  </Step>
+  <Step title="Review and adjust">
+    Browse the generated blocks. Each block shows the assignment, course, estimated duration, and time slot. You can regenerate if you want a different distribution.
+  </Step>
+  <Step title="Save or export">
+    Click **Save** to persist the schedule across sessions, or **Export to Google Calendar** to push all blocks to your calendar as events.
+  </Step>
+</Steps>
+
+## Schedule Structure
+
+A generated schedule is broken into focused work blocks with explicit breaks. Each block contains:
+
+<CardGroup cols={2}>
+  <Card title="Task reference" icon="link">
+    Which assignment the block is for, including course name and due date.
+  </Card>
+  <Card title="Time window" icon="clock">
+    Start and end time placed inside one of your available slots for that day.
+  </Card>
+  <Card title="Block duration" icon="hourglass">
+    Tuned to your stamina history. Default is 45 minutes; the engine learns your actual sitting length over time (bounds: 20–90 minutes).
+  </Card>
+  <Card title="Breaks" icon="coffee">
+    After 90 minutes of continuous scheduled work the engine inserts a real break before the next block.
+  </Card>
+</CardGroup>
+
+## Exam-Aware Spaced Revision
+
+When the scheduler detects an exam in your assignment list — by title keywords like *exam*, *midterm*, *final*, *quiz*, *AP exam*, *SAT*, or *ACT* — it builds a dedicated spaced revision plan instead of a single last-minute block.
+
+Revision sittings are placed on a ladder of days before the exam. The number of sittings scales with lead time:
+
+| Lead time | Revision sittings |
+|---|---|
+| ≥ 10 days | 4 sittings (days 10, 6, 3, 1 before) |
+| ≥ 6 days | 3 sittings |
+| ≥ 3 days | 2 sittings |
+| < 3 days | 1 sitting |
+
+Each revision sitting is 40 minutes by default (minimum 25 minutes) — short enough that you will actually start them.
+
+## Flashcard Review Budgeting
+
+If you use the Study & Learn feature, the scheduler reads your SRS review queue and reserves time for cards that fall due on each day. This prevents the common failure mode of a planner that books you at 90 minutes of free time on a day when 140 flashcard reviews are already due.
+
+## Overload Detection
+
+When your assignments genuinely cannot fit your available hours, the scheduler does not silently drop blocks. It returns a structured shortfall report:
+
+- How many minutes short the week is
+- Which days still have capacity
+- Which tasks were left unplaced and why
+
+This gives you actionable information rather than a count of dropped blocks you cannot interpret.
+
+## AI Models
+
+<Tabs>
+  <Tab title="Primary — Gemini 2.5 Flash">
+    The default model for schedule generation. Google Gemini 2.5 Flash produces high-quality, context-aware study plans and handles complex multi-assignment weeks well.
+  </Tab>
+  <Tab title="Fallback — Groq Llama">
+    When Gemini is unavailable or rate-limited, IntelliPlan automatically falls back to Groq's Llama model via the unified `ai_provider.py` layer. The fallback is transparent — your schedule is generated without any error shown to you.
+  </Tab>
+</Tabs>
+
+The unified AI layer (`ai_provider.py`) manages model selection, retries, and fallback logic. You never need to configure which model is used.
+
+## Saving Schedules
+
+Generated schedules are saved to your account and persist across browser sessions and devices. The save and load endpoints:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/generate_schedule` | POST | Generate an AI study schedule from your assignments |
+| `/schedule/save` | POST | Save a generated schedule |
+| `/schedule/saved` | GET | Load the most recently saved schedule |
+
+## Google Calendar Export
+
+Click **Export to Google Calendar** to push every scheduled block to your calendar as an event. Each event includes the assignment title, course name, and the block duration.
+
+<Steps>
+  <Step title="Connect Google Calendar">
+    Go to **Settings → Integrations** and click **Connect Google Calendar**. This starts an OAuth 2.0 + PKCE flow.
+  </Step>
+  <Step title="Generate and save a schedule">
+    Create a schedule in the Scheduler and save it.
+  </Step>
+  <Step title="Export">
+    Click **Export to Google Calendar**. IntelliPlan calls `/calendar/export` and creates events in your primary calendar.
+  </Step>
+</Steps>
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/oauth/google` | GET | Start the Google OAuth flow |
+| `/calendar/export` | POST | Export schedule blocks to Google Calendar |
+
+<Warning>
+  Google Calendar export requires an active Google Calendar connection. If you have not connected your account yet, the export button will prompt you to connect first.
+</Warning>
+
+## Scheduler Engine Reference
+
+Key constants from `scheduler_engine.py` that shape how your schedule is built:
+
+```python title="scheduler_engine.py — key constants"
+# Clock ranges the settings UI's availability toggles map to
+SLOT_WINDOWS: dict[str, tuple[int, int]] = {
+    "morning":   (6,  12),
+    "afternoon": (12, 17),
+    "evening":   (17, 22),
+}
+
+# A free window shorter than this can't hold a useful study block
+MIN_WINDOW_MINUTES = 20
+
+# Fallback single-block length when the student has no history yet
+DEFAULT_STAMINA_MINUTES = 45
+STAMINA_BOUNDS = (20, 90)
+
+# Minutes of continuous work before the engine forces a real break
+LONG_BREAK_AFTER_MINUTES = 90
+```
+
+The engine requires at least **4 history rows** (`MIN_SAMPLES_FOR_SIGNAL = 4`) before it trusts completion data enough to act on it. Before that threshold, it uses `DEFAULT_STAMINA_MINUTES` as the block length.

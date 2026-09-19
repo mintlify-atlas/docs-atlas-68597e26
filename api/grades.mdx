@@ -1,0 +1,175 @@
+---
+title: "Grades and GPA Data API Endpoints"
+sidebarTitle: "Grades"
+description: "Retrieve course grades and GPA pulled live from the student's connected school platform. Requires the read:grades scope."
+---
+
+The Grades API exposes course grades and GPA data imported directly from the student's connected school platform. This is deliberately its own scope (`read:grades`) rather than being bundled under `read:assignments` — knowing what is due and knowing what a student scored are different levels of trust, and grades are the most sensitive academic data IntelliPlan holds. Two endpoints surface this data: the public API endpoint at `/api/v1/grades` which normalizes the response into a consistent shape regardless of the underlying LMS, and the internal web route `/grades/data` which returns the raw per-provider payload. Third-party integrations should always use the `/api/v1/` endpoint.
+
+<Note>
+Grade data is sourced from the student's connected school platform (Canvas, Google Classroom, StudentVue, Schoology, Blackboard, or Moodle). If no LMS is connected, or if the connected platform does not provide grade data via its API, the `grades` array will be empty. Grades require the `read:grades` scope — this scope must be explicitly granted when creating or requesting an API key.
+</Note>
+
+---
+
+## GET /api/v1/grades — Course Grades and GPA
+
+Returns a normalized list of course grades and computed GPA pulled live from the student's connected school platform. The response shape is consistent regardless of which LMS is connected — IntelliPlan normalizes the raw platform payload so your client only needs one renderer.
+
+**Required scope:** `read:grades`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X GET https://intelliplan.tech/api/v1/grades \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "grades": [
+        {
+          "course": "AP Biology",
+          "grade": "A-",
+          "percentage": 91.4,
+          "points_earned": 457,
+          "points_possible": 500,
+          "gpa_points": 4.0
+        },
+        {
+          "course": "AP Calculus BC",
+          "grade": "B+",
+          "percentage": 88.7,
+          "points_earned": 266,
+          "points_possible": 300,
+          "gpa_points": 3.7
+        },
+        {
+          "course": "AP US History",
+          "grade": "A",
+          "percentage": 94.2,
+          "points_earned": 377,
+          "points_possible": 400,
+          "gpa_points": 4.0
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Response Fields
+
+<ResponseField name="grades" type="array">
+  Array of course grade objects, one per enrolled course with grade data. Empty array if no LMS is connected or the platform has no grade data available.
+
+  <Expandable title="Course grade object fields">
+    <ResponseField name="course" type="string">
+      Course or class name as it appears in the connected LMS.
+    </ResponseField>
+    <ResponseField name="grade" type="string">
+      Letter grade (e.g. `"A"`, `"B+"`, `"C-"`). May be `null` if the course has not been graded yet.
+    </ResponseField>
+    <ResponseField name="percentage" type="number">
+      Current grade as a percentage (e.g. `91.4` for 91.4%). May be `null` if not available from the provider.
+    </ResponseField>
+    <ResponseField name="points_earned" type="number">
+      Total points earned in the course so far. Present when the connected platform reports point totals.
+    </ResponseField>
+    <ResponseField name="points_possible" type="number">
+      Total possible points in the course. Present when the connected platform reports point totals.
+    </ResponseField>
+    <ResponseField name="gpa_points" type="number">
+      GPA quality points for this course (e.g. `4.0` for an A, `3.7` for A-, `3.3` for B+). Computed by IntelliPlan from the letter grade using the standard 4.0 scale.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Warning>
+If the upstream school platform returns an error (network failure, expired OAuth token, or the student's account has been revoked), this endpoint returns HTTP `502` with `"error": "upstream_failed"`. The student should be prompted to reconnect their LMS from IntelliPlan Settings → Integrations.
+</Warning>
+
+---
+
+## GET /grades/data — Raw Grade Data (Web Route)
+
+The internal web route that returns raw grade data from the connected provider. This is called by the Grades page in the IntelliPlan web app and by `/api/v1/grades` internally. It returns the platform's native payload shape, which varies by provider.
+
+<Note>
+This is a session-authenticated web route, not a public API endpoint. Use `GET /api/v1/grades` for third-party integrations — it normalizes the response into a consistent shape and is protected by API key scopes.
+</Note>
+
+```bash title="cURL — web session required"
+curl -X GET https://intelliplan.tech/grades/data \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+The raw response shape varies by connected provider. The `/api/v1/grades` endpoint normalizes all providers into the structure documented above by scanning the provider response for a `grades`, `courses`, or `classes` array key.
+
+---
+
+## Grade Modeler
+
+The Grade Modeler — available at `/grademodel` in the IntelliPlan web UI — lets students run "what if I score X% on my next test?" simulations. It takes the current grades data and hypothetical future scores to project how the course grade and GPA would change. This feature is available in the web UI only; there is currently no dedicated API endpoint for it.
+
+---
+
+## Scope Reference
+
+<CardGroup cols={2}>
+  <Card title="read:grades" icon="lock">
+    Required for `GET /api/v1/grades`. This scope must be explicitly requested when applying for an API key at [intelliplan.tech/developers](https://intelliplan.tech/developers). It is not included in default key grants.
+  </Card>
+  <Card title="read:assignments" icon="list-check">
+    Used by the assignments and tasks endpoints. Does **not** grant access to grades — the two scopes are intentionally separate.
+  </Card>
+</CardGroup>
+
+<Tip>
+  If you are building a grade-tracking integration, request the `read:grades` scope during the API key application at [intelliplan.tech/developers](https://intelliplan.tech/developers). Describe your use case — the IntelliPlan team reviews scope grants individually for sensitive scopes like this one.
+</Tip>
+
+---
+
+## Error Responses
+
+<AccordionGroup>
+  <Accordion title="upstream_failed (502)">
+    The connected school platform returned an error. This happens when the student's OAuth token has expired, the school's LMS is temporarily unavailable, or the platform account has been deauthorized. Prompt the student to reconnect their LMS.
+
+    ```json
+    {
+      "status": "error",
+      "error": "upstream_failed",
+      "message": "Could not load grades from the connected sources.",
+      "request_id": "a3f1b2c4d5e6f789"
+    }
+    ```
+  </Accordion>
+  <Accordion title="insufficient_scope (403)">
+    The API key used does not have the `read:grades` scope. Request a new key with the grade scope explicitly enabled.
+
+    ```json
+    {
+      "status": "error",
+      "error": "insufficient_scope",
+      "message": "This key is not authorized for that. Missing scope(s): read:grades.",
+      "required": ["read:grades"],
+      "granted": ["read:assignments", "read:streak"]
+    }
+    ```
+  </Accordion>
+  <Accordion title="unauthorized (401)">
+    No API key or Bearer token was provided, or the credential is invalid.
+
+    ```json
+    {
+      "status": "error",
+      "error": "unauthorized",
+      "message": "Send a valid `X-API-Key` header, or a Bearer token from POST /api/v1/auth/token. Apply for a key at /developers.",
+      "request_id": "b4c2d1e0f8a7b3c5"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>

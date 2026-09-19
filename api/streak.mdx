@@ -1,0 +1,283 @@
+---
+title: "Streak and Gamification API Endpoints"
+sidebarTitle: "Streak"
+description: "Read and update the Duolingo-style task-completion streak, sparks, freezes, level, week dots, nudge state, and timezone via the IntelliPlan streak API."
+---
+
+IntelliPlan includes an optional Duolingo-style streak system gated behind the `streak_v1` feature flag. When enabled, every qualifying action (completing a task or viewing the dashboard) counts toward a daily streak. Streaks are tracked in the student's local timezone — not UTC — so a student flying west doesn't lose their streak mid-flight. Users start with two streak freezes (maximum cap of three), with a new freeze earned at every 7-day streak milestone. The streak system is percentage-rollout controlled, meaning it can be enabled for a subset of users for A/B testing. Two groups of endpoints exist: the public `/api/v1/streak` endpoint under the versioned API, and the session-authenticated `/api/streak/` web routes used by the dashboard UI for real-time interaction tracking.
+
+<Note>
+The streak system is behind the `streak_v1` feature flag, which is **off by default** in production. See the [Dashboard documentation](/features/dashboard) for how to enable it. The public `/api/v1/streak` endpoint requires the `read:streak` scope; the `/api/streak/` web routes require an active login session.
+</Note>
+
+---
+
+## GET /api/v1/streak — Public Streak Data
+
+Returns the student's current streak, sparks balance, streak freezes, level, and active quests. This is the primary endpoint for third-party clients (mobile apps, browser extensions) that want to display the student's gamification state. It proxies the `/study/points` internal feed.
+
+**Required scope:** `read:streak`
+
+<Tabs>
+  <Tab title="Request">
+    ```bash title="cURL"
+    curl -X GET https://intelliplan.tech/api/v1/streak \
+      -H "X-API-Key: ip_live_YOUR_KEY_HERE"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json title="200 OK"
+    {
+      "streak_count": 12,
+      "longest_streak": 21,
+      "sparks_earned_total": 840,
+      "sparks_balance": 620,
+      "streak_freeze_count": 2,
+      "freeze_capacity": 3,
+      "level": 5,
+      "level_progress": 0.67,
+      "weekly_quests": [
+        {
+          "id": "maintain_7_days",
+          "title": "Maintain your streak all 7 days",
+          "metric": "study_days",
+          "target": 7,
+          "progress": 5,
+          "reward": 120
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<ResponseField name="streak_count" type="integer">
+  Current active streak count in days.
+</ResponseField>
+
+<ResponseField name="longest_streak" type="integer">
+  The student's all-time longest streak in days.
+</ResponseField>
+
+<ResponseField name="sparks_earned_total" type="integer">
+  Total sparks (XP points) ever earned by the student.
+</ResponseField>
+
+<ResponseField name="sparks_balance" type="integer">
+  Current spendable sparks balance (earned total minus shop purchases).
+</ResponseField>
+
+<ResponseField name="streak_freeze_count" type="integer">
+  Number of streak freezes currently available. Each freeze covers one missed day automatically.
+</ResponseField>
+
+<ResponseField name="freeze_capacity" type="integer">
+  Maximum freeze count the student can hold (starts at 2, maximum is 3).
+</ResponseField>
+
+<ResponseField name="level" type="integer">
+  Current gamification level, derived from total sparks earned.
+</ResponseField>
+
+<ResponseField name="level_progress" type="number">
+  Progress through the current level as a fraction from 0 to 1 (e.g. `0.67` = 67% to the next level).
+</ResponseField>
+
+<ResponseField name="weekly_quests" type="array">
+  Active weekly quests with progress tracking. Each quest has a title, target metric, current progress, and spark reward.
+</ResponseField>
+
+---
+
+## GET /api/streak/status — Dashboard Streak Status
+
+Returns rich streak state for the dashboard UI: current streak, week-at-a-glance dots, nudge eligibility, and the user's cohort assignment for A/B analysis. The first status fetch of each local calendar day automatically records a qualifying action (visiting the app counts as a plan review), but subsequent fetches that day are read-only — the nav badge can poll this safely without artificially inflating the streak.
+
+```bash title="cURL — session authenticated"
+curl -X GET https://intelliplan.tech/api/streak/status \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+```json title="200 OK"
+{
+  "status": "ok",
+  "enabled": true,
+  "current_streak": 12,
+  "longest_streak": 21,
+  "freezes_available": 2,
+  "freezes_max": 3,
+  "week_dots": [
+    {"date": "2025-02-10", "qualified": true},
+    {"date": "2025-02-11", "qualified": true},
+    {"date": "2025-02-12", "qualified": true},
+    {"date": "2025-02-13", "qualified": true},
+    {"date": "2025-02-14", "qualified": false},
+    {"date": "2025-02-15", "qualified": false},
+    {"date": "2025-02-16", "qualified": false}
+  ],
+  "show_nudge": false,
+  "timezone": "America/Los_Angeles",
+  "cohort": "treatment"
+}
+```
+
+<ResponseField name="enabled" type="boolean">
+  Whether the `streak_v1` feature flag is enabled for this user. When `false`, no other streak fields are populated.
+</ResponseField>
+
+<ResponseField name="week_dots" type="array">
+  Array of 7 day objects for the current week (Monday → Sunday) in the student's local timezone. Each entry has a `date` (ISO 8601) and `qualified` (boolean) indicating whether the student earned the streak that day.
+</ResponseField>
+
+<ResponseField name="show_nudge" type="boolean">
+  Whether the app should display a streak-protection nudge to the student (e.g. "Don't lose your 12-day streak — study something today!"). `true` when the streak is at risk and today's nudge hasn't been shown yet.
+</ResponseField>
+
+<ResponseField name="cohort" type="string">
+  A/B cohort assignment for `streak_v1` analytics: `"treatment"` or `"control"`. Determined by a deterministic SHA-256 hash on `streak_v1:{user_id}`.
+</ResponseField>
+
+---
+
+## POST /api/streak/plan-review — Record a Dashboard View
+
+Explicitly records a dashboard view as a qualifying streak action. Call this when the student lands on the Today/dashboard page. If the streak is already recorded for today in the student's local timezone, this is a no-op. Also awards once-per-day pet XP.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/streak/plan-review \
+  -H "Content-Type: application/json" \
+  -d '{"timezone": "America/New_York"}'
+```
+
+<ParamField body="timezone" type="string">
+  IANA timezone string from the browser (e.g. `"America/New_York"`, `"Europe/London"`). Used to determine the correct local date for this qualifying action. If omitted, the stored timezone is used; if no timezone is stored yet, `"UTC"` is used as a fallback.
+</ParamField>
+
+```json title="200 OK"
+{
+  "status": "ok",
+  "current_streak": 13,
+  "event": "streak_continued",
+  "toast_message": "13-day streak! 🔥",
+  "freeze_earned": false
+}
+```
+
+<ResponseField name="event" type="string">
+  The analytics event that fired: `"streak_started"`, `"streak_continued"`, `"streak_broken"`, `"streak_freeze_consumed"`, or `"streak_freeze_earned"`. `null` if today was already qualified.
+</ResponseField>
+
+<ResponseField name="toast_message" type="string">
+  Optional UI toast message to display to the student (e.g. `"13-day streak! 🔥"`). `null` if no toast is warranted.
+</ResponseField>
+
+<ResponseField name="freeze_earned" type="boolean">
+  `true` when this qualifying action triggered a streak freeze reward (earned at every 7-day milestone, up to the cap of 3).
+</ResponseField>
+
+---
+
+## POST /api/streak/set-timezone — Persist IANA Timezone
+
+Persists the student's IANA timezone from the browser. The streak engine uses this timezone for all subsequent date calculations. Call this on first load and whenever the browser's `Intl.DateTimeFormat().resolvedOptions().timeZone` changes.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/streak/set-timezone \
+  -H "Content-Type: application/json" \
+  -d '{"timezone": "America/Los_Angeles"}'
+```
+
+<ParamField body="timezone" type="string" required>
+  A valid IANA timezone string (e.g. `"America/Los_Angeles"`, `"Europe/Berlin"`, `"Asia/Tokyo"`).
+</ParamField>
+
+```json title="200 OK"
+{
+  "status": "ok"
+}
+```
+
+---
+
+## POST /api/streak/nudge-shown — Mark Nudge as Shown
+
+Marks today's streak-protection nudge as already shown, preventing it from appearing again for the rest of the day. Call this immediately after rendering the nudge UI element.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/streak/nudge-shown
+```
+
+```json title="200 OK"
+{"status": "ok"}
+```
+
+---
+
+## POST /api/streak/nudge-tapped — Track Nudge Tap
+
+Records that the student tapped/clicked the streak nudge. Fires the `nudge_tapped` PostHog analytics event server-side. No state is changed in the database — this is a pure analytics call.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/streak/nudge-tapped
+```
+
+```json title="200 OK"
+{"status": "ok"}
+```
+
+---
+
+## POST /api/streak/pill-tapped — Track Streak Pill Tap
+
+Records that the student tapped the streak pill (the streak counter badge in the nav bar). Fires the `streak_pill_tapped` PostHog analytics event with the current streak count.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/streak/pill-tapped
+```
+
+```json title="200 OK"
+{"status": "ok"}
+```
+
+---
+
+## How the Streak System Works
+
+<AccordionGroup>
+  <Accordion title="Qualifying actions">
+    Two actions qualify a day toward the streak: completing a task (calling `POST /api/v1/assignments/dismiss`) and viewing the dashboard (calling `POST /api/streak/plan-review`). Only the first qualifying action per local calendar day advances the streak counter. Subsequent actions the same day are no-ops — the streak only increments once per day.
+  </Accordion>
+  <Accordion title="Timezone awareness">
+    Streaks are resolved against the student's **local timezone**, never UTC. The timezone is set via `POST /api/streak/set-timezone` and stored on the `user_streaks` row. A student who qualifies on the 8th in London, then flies to Los Angeles (where it is still the 7th), will not lose their streak — the engine treats the future-dated qualifying date as already-qualified and holds the streak until local time catches up.
+  </Accordion>
+  <Accordion title="Streak freezes">
+    Users start with **2 streak freezes** (the maximum cap is **3**). A freeze is consumed automatically when a day is missed, protecting the streak silently. A new freeze is earned at each **7-day streak milestone** (7, 14, 21, 28, …), up to the cap of 3. Freeze consumption fires the `streak_freeze_consumed` analytics event; earning a freeze fires `streak_freeze_earned` and sets `freeze_earned: true` in the plan-review response.
+  </Accordion>
+  <Accordion title="Feature flag and rollout">
+    The streak system is controlled by the `streak_v1` feature flag. It supports percentage-based rollout via a deterministic SHA-256 hash on `"streak_v1:{user_id}"` — this means a given user is always in the same cohort (`treatment` or `control`), enabling stable A/B comparisons. The cohort is reported in `GET /api/streak/status` responses.
+
+    To enable the streak feature:
+    ```sql
+    UPDATE feature_flags SET enabled = true, rollout_percentage = 100 WHERE key = 'streak_v1';
+    ```
+    Or set `STREAK_V1_ENABLED=1` in the environment before starting the server.
+  </Accordion>
+  <Accordion title="PostHog analytics events">
+    When `POSTHOG_API_KEY` is set, the following events fire server-side: `streak_started`, `streak_continued`, `streak_broken`, `streak_freeze_consumed`, `streak_freeze_earned`, `nudge_shown`, `nudge_tapped`, `streak_pill_tapped`. The user property `streak_v1_cohort` (`treatment` or `control`) is set on each streak status fetch.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Streak Freeze Milestones
+
+| Streak Milestone | Freeze Earned | Cumulative Freezes (capped at 3) |
+|:---:|:---:|:---:|
+| 7 days | +1 | 2 (if started at 2, no change) |
+| 14 days | +1 | 3 (cap reached) |
+| 21 days | +1 | 3 (at cap — no additional freeze) |
+| 28 days | +1 | 3 (at cap) |
+
+<Info>
+Streaks are scored using a pure logic engine (`streak_engine.py`) with no Flask or database dependencies, meaning the core logic is fully unit-testable in isolation. Run `pytest test_streak_engine.py -v` for unit tests and `pytest test_streak_e2e.py -v` for end-to-end tests against an in-memory SQLite database.
+</Info>

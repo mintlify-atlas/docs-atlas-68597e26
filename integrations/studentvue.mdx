@@ -1,0 +1,80 @@
+---
+title: "Connect StudentVue to IntelliPlan"
+sidebarTitle: "StudentVue"
+description: "Import assignments and missing work from StudentVue into IntelliPlan using your district URL and school credentials — no OAuth required."
+---
+
+StudentVue is the student-facing portal for the Edupoint SIS (Student Information System), used by hundreds of school districts across the United States. Unlike OAuth-based integrations, StudentVue connects using your district's portal URL and your standard school login credentials — the same username and password you use to log in at your school's StudentVue website. IntelliPlan communicates with the StudentVue web service API over SOAP, parses the XML response, and normalizes it into the same assignment format as every other integration, so the dashboard and AI scheduler work identically regardless of which platform a student uses.
+
+## What Gets Imported
+
+When StudentVue is connected, IntelliPlan imports:
+
+- **Assignments** — title, due date, score (when graded), and course name for all assignments visible in your gradebook
+- **Missing work** — assignments flagged as missing or not turned in, surfaced in the dedicated Missing Assignments view (`/missing/data`)
+- **Course names** — used to group and filter assignments in the Classes View
+
+Priority is computed using a multi-factor scoring function that weighs days until due, points possible, and whether the title matches high-stakes keywords (test, exam, project, essay, presentation, lab report). This prevents the dashboard from lighting up entirely red the week before a quiz.
+
+## Connecting via District URL
+
+<Steps>
+  <Step title="Find your district's StudentVue URL">
+    This is the URL you visit when logging into StudentVue at school — typically in the format `https://wa-nor-psv.edupoint.com` or `https://sis.district.k12.state.us`. Check your school's website or ask your counselor if you are unsure.
+
+    Some common district aliases are recognized automatically — for example, entering `northshore` or `nsd` resolves to the Northshore School District endpoint.
+  </Step>
+  <Step title="Enter credentials in IntelliPlan">
+    Go to **Settings → Integrations → StudentVue** and enter:
+    - Your **District URL** (the base URL, not a full login page path)
+    - Your **Username** (usually your student ID number)
+    - Your **Password** (your StudentVue password)
+  </Step>
+  <Step title="Authorize the connection">
+    IntelliPlan verifies the credentials against the StudentVue SOAP endpoint. If login succeeds, assignments are fetched immediately and the connection is saved for future syncs.
+  </Step>
+</Steps>
+
+<Warning>
+  IntelliPlan transmits your StudentVue credentials only to your own district's StudentVue endpoint. They are stored encrypted using the `DATA_ENCRYPTION_KEY` Fernet key and never sent to any third party. If you change your StudentVue password, you will need to update the credentials in Settings.
+</Warning>
+
+## Chrome Extension Integration
+
+The IntelliPlan Chrome Extension also works with StudentVue. When you are browsing your StudentVue portal in Chrome, the extension injects a lightweight IntelliPlan widget directly into the page — giving you quick access to your AI-generated schedule and priority view without leaving StudentVue. The extension badge count also reflects assignments pulled from StudentVue alongside any other connected platforms.
+
+To install the extension, download the latest `.zip` from the [IntelliPlan repository](https://github.com/UAnirudh/IntelliPlan) and load it via `chrome://extensions` in Developer Mode.
+
+## Priority Scoring Logic
+
+IntelliPlan uses a balanced priority algorithm for StudentVue assignments rather than a naive "anything due in 3 days is High" rule. The scoring logic is:
+
+| Priority | Conditions |
+|---|---|
+| **High** | Overdue, due today or tomorrow, major assessment (test/exam/project) due within 3 days, or ≥ 80 pt assignment due within 4 days |
+| **Medium** | Due within 5 days, major assessment within 7 days, or ≥ 30 pt assignment within 7 days |
+| **Low** | Everything else — small, far away, or low-stakes |
+
+This means a 10-point homework due in 2 days will show as Medium rather than clogging the High column alongside your upcoming midterm.
+
+## Missing Work
+
+StudentVue exposes a dedicated missing-work feed. IntelliPlan surfaces this in the **Overdue** column of the kanban dashboard and through the `/missing/data` endpoint. Assignments more than 14 days past due are excluded from the dashboard to keep the view actionable.
+
+```http
+GET /missing/data
+```
+
+## Troubleshooting
+
+<Accordion title="Connection fails with 'invalid credentials'">
+  Verify that you can log in to your district's StudentVue portal directly in a browser using the same username and password. If your school recently reset passwords, update them in **Settings → Integrations → StudentVue**. Ensure the district URL does not include a path — use `https://wa-nor-psv.edupoint.com`, not `https://wa-nor-psv.edupoint.com/PXP2_Login.aspx`.
+</Accordion>
+
+<Accordion title="I don't know my district URL">
+  Search for your district name followed by "StudentVue" — most district IT pages list the URL. You can also try entering a short alias like your district abbreviation; IntelliPlan recognizes several common aliases and resolves them automatically.
+</Accordion>
+
+<Accordion title="Assignments from a course are missing">
+  StudentVue only exposes assignments that your teacher has published to the gradebook portal. If a teacher hasn't entered grades or published the assignment in their SIS settings, it will not appear in IntelliPlan's import either.
+</Accordion>

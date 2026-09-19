@@ -1,0 +1,107 @@
+---
+title: "Integrations Overview: Connect Your School Platforms"
+sidebarTitle: "Overview"
+description: "Connect Canvas, Google Classroom, StudentVue, Schoology, Blackboard, Moodle, Google Calendar, and Notion to IntelliPlan for automatic assignment import and smart scheduling."
+---
+
+IntelliPlan is designed to meet students where their data already lives. Rather than asking you to re-enter assignments by hand, it connects directly to the platforms your school already uses — pulling assignments, due dates, points, and course names automatically so the AI scheduler always has an accurate picture of your workload. Beyond school platforms, IntelliPlan also pushes data outward: your AI-generated study schedules can be exported to Google Calendar with one click, and your task list stays in two-way sync with Notion databases. Every source, whether pulled or pushed, is merged into a single unified view through the `/tasks/unified` endpoint.
+
+## Supported Integrations
+
+| Integration | Category | What It Provides |
+|---|---|---|
+| **Canvas LMS** | LMS | Assignments, due dates, points, course names via REST API |
+| **Google Classroom** | LMS | Active courses and coursework via Google OAuth |
+| **StudentVue** | LMS | Assignments and missing work via the StudentVue API |
+| **Schoology** | LMS | Assignments via API key + secret (OAuth1) |
+| **Blackboard Learn** | LMS | Gradebook due dates via OAuth 2.0 three-legged flow |
+| **Moodle** | LMS | Assignments and events via web-services token |
+| **Google Calendar** | Productivity | One-click export of AI-generated study schedules |
+| **Notion** | Productivity | Two-way task sync with your Notion databases |
+| **Chrome Extension** | Client | Badge count, Canvas and StudentVue page injection |
+| **PWA (Android)** | Client | Installable from Chrome's install prompt or menu |
+| **PWA (iOS)** | Client | Installable via Safari Add to Home Screen |
+| **Desktop App** | Client | Native Windows, macOS, and Linux builds with tray and OS notifications |
+
+## LMS Integrations
+
+<CardGroup cols={3}>
+  <Card title="Canvas LMS" icon="graduation-cap" href="/integrations/canvas">
+    Connect via OAuth 2.0 Developer Key. Imports assignments, due dates, points possible, and course names. Supports multi-institution per-host key overrides.
+  </Card>
+  <Card title="Google Classroom" icon="google" href="/integrations/google-classroom">
+    Connect via Google OAuth 2.0. Imports all active courses and their coursework automatically after a one-time authorization.
+  </Card>
+  <Card title="StudentVue" icon="school" href="/integrations/studentvue">
+    Connect with your district URL and school credentials. Imports assignments and flags missing work. Also injected by the Chrome Extension.
+  </Card>
+  <Card title="Schoology" icon="book" href="/integrations/schoology">
+    Connect with an API key and secret from your Schoology account. Imports all section assignments across your enrolled courses.
+  </Card>
+  <Card title="Blackboard Learn" icon="chalkboard" href="/integrations/blackboard">
+    OAuth 2.0 three-legged flow. Requires your school's Blackboard admin to register IntelliPlan's Application ID first. Includes a built-in diagnostic tool.
+  </Card>
+  <Card title="Moodle" icon="plug" href="/integrations/moodle">
+    Connect with your Moodle site URL and a web-services token. No admin action required for most institutions. Controlled by the `MOODLE_ENABLED` env var.
+  </Card>
+</CardGroup>
+
+## Productivity Integrations
+
+<CardGroup cols={2}>
+  <Card title="Google Calendar" icon="calendar" href="/integrations/google-calendar">
+    Export AI-generated study schedules to Google Calendar in one click. Uses OAuth 2.0 with PKCE for secure token exchange.
+  </Card>
+  <Card title="Notion" icon="file-lines" href="/integrations/notion">
+    Two-way sync between IntelliPlan tasks and your Notion databases. Public integration OAuth flow with automatic token refresh.
+  </Card>
+</CardGroup>
+
+## The Unified Tasks Endpoint
+
+Every integration funnels its data into a single endpoint that IntelliPlan uses internally for the dashboard, priority view, and AI scheduler:
+
+```http
+GET /tasks/unified
+```
+
+This endpoint merges assignments from every connected LMS platform, manual tasks you have created inside IntelliPlan, and any tasks synced from Notion. The result is a single deduplicated, priority-sorted list — so the AI scheduler always operates on a complete picture regardless of which combination of platforms a student uses.
+
+<Info>
+  You do not need to call `/tasks/unified` directly as a student. The IntelliPlan dashboard, Priority View, and Classes View all consume it automatically. It is documented here for developers integrating IntelliPlan data into their own tooling.
+</Info>
+
+## Connection Status
+
+You can check which integrations are currently connected from **Settings → Integrations** inside the app, or programmatically via:
+
+```http
+GET /api/lms/status
+```
+
+This returns a JSON object with a key for each provider and a boolean `connected` value for each. Individual provider status is also available at the per-provider routes:
+
+```http
+GET /api/lms/status/google_classroom
+GET /api/lms/status/blackboard
+GET /api/lms/status/moodle
+```
+
+## Syncing and Disconnecting
+
+All providers registered in the IntelliPlan LMS registry support a common sync and disconnect interface:
+
+```http
+POST /api/lms/<key>/sync
+POST /api/lms/<key>/disconnect
+```
+
+Replace `<key>` with the provider identifier (e.g. `google_classroom`, `blackboard`, `moodle`). You can also list every provider the registry knows about:
+
+```http
+GET /api/lms/providers
+```
+
+<Tip>
+  If an integration stops returning data, try a manual sync from Settings before disconnecting and reconnecting. Transient token expiry is handled automatically, but a full re-authorization is occasionally needed when school-side OAuth scopes change.
+</Tip>

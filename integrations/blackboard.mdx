@@ -1,0 +1,133 @@
+---
+title: "Connect Blackboard Learn to IntelliPlan"
+sidebarTitle: "Blackboard"
+description: "Connect Blackboard Learn via OAuth 2.0 three-legged flow — requires your school's Blackboard admin to register IntelliPlan's Application ID before students can sign in."
+---
+
+Blackboard Learn integration uses OAuth 2.0 three-legged authorization (3LO) to connect a student's Blackboard account to IntelliPlan and import gradebook due dates. Unlike Canvas or Google Classroom, Blackboard's REST API requires each institution to explicitly approve third-party applications before their students can complete the OAuth flow. This means two things have to be true before sign-in can work: IntelliPlan must be registered in the Anthology developer portal, and each school's Blackboard administrator must have added IntelliPlan's Application ID under their institution's REST API integrations with end-user access enabled. If the school has not done this yet, IntelliPlan shows the student exactly what steps their administrator needs to take — so they can forward the instructions rather than hitting a confusing error.
+
+## What Gets Imported
+
+When Blackboard is connected, IntelliPlan imports:
+
+- **Gradebook due dates** — assignment titles and due dates from the student's enrolled courses
+- **Course names** — used for grouping in the Classes View and AI scheduler context
+
+## Environment Variables
+
+```env title=".env"
+# Blackboard Learn OAuth — three-legged flow
+BLACKBOARD_APP_KEY=
+BLACKBOARD_APP_SECRET=
+BLACKBOARD_APPLICATION_ID=
+BLACKBOARD_SCOPE=read offline
+BLACKBOARD_REDIRECT_URI=https://intelliplan.tech/api/lms/callback/blackboard
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `BLACKBOARD_APP_KEY` | Yes | The OAuth `client_id` — the Application Key UUID from the developer portal |
+| `BLACKBOARD_APP_SECRET` | Yes | The matching OAuth secret for the Application Key |
+| `BLACKBOARD_APPLICATION_ID` | Yes | The UUID each school's admin registers under REST API Integrations |
+| `BLACKBOARD_SCOPE` | No | OAuth scopes. `offline` is required for refresh tokens — defaults to `read offline` |
+| `BLACKBOARD_REDIRECT_URI` | Yes | Must match the developer-portal registration byte-for-byte |
+
+<Warning>
+  **Application ID, Application Key, and App Secret are three distinct values — they are not interchangeable.** The Anthology developer portal shows all three when you register an application, and the names vary between screens. Using the wrong value in the wrong slot produces a confusing error.
+
+  - **`BLACKBOARD_APP_KEY`** → The **Application Key** UUID. This is the `client_id` sent to Blackboard's authorization endpoint. Do not put the Application ID here.
+  - **`BLACKBOARD_APP_SECRET`** → The **Secret** that pairs with the Application Key.
+  - **`BLACKBOARD_APPLICATION_ID`** → The **Application ID** (also shown as the LTI 1.3 "Client ID"). This is what the school's Blackboard administrator registers, not what you send as `client_id`.
+
+  Placing the Application ID in `BLACKBOARD_APP_KEY` causes Blackboard to return `{"code":"illegalArgument","message":"invalid client_id"}` after the student has already signed in — a confusing failure that looks like an IntelliPlan bug but is a credential misconfiguration.
+</Warning>
+
+## Institutional Admin Registration
+
+Before any student at a given institution can complete the Blackboard OAuth flow, that institution's Blackboard administrator must register IntelliPlan's Application ID on their Learn instance. The steps are:
+
+<Steps>
+  <Step title="Sign in as a Blackboard System Administrator">
+    Log in to the institution's Blackboard Learn instance with a System Administrator account.
+  </Step>
+  <Step title="Open REST API Integrations">
+    Navigate to **System Admin → Integrations → REST API Integrations**.
+  </Step>
+  <Step title="Create a new integration">
+    Click **Create Integration**. In the **Application ID** field, enter IntelliPlan's `BLACKBOARD_APPLICATION_ID` value (the UUID from the Anthology developer portal).
+  </Step>
+  <Step title="Enable End User Access">
+    Set **End User Access** to **Yes**. This is required — without it, students cannot authorize the OAuth flow even after the administrator has added the application.
+  </Step>
+  <Step title="Save">
+    Save the integration. Students at this institution can now complete the IntelliPlan Blackboard sign-in flow.
+  </Step>
+</Steps>
+
+<Info>
+  Until the school administrator completes these steps, IntelliPlan's `/connect` page automatically detects that Blackboard access cannot succeed and shows the student the exact instructions above — including the Application ID they need to give their admin — so they can request activation without needing to understand the technical details.
+</Info>
+
+## OAuth Flow Overview
+
+Once admin registration is complete, the student-facing flow works as follows:
+
+<Steps>
+  <Step title="Student enters their institution URL">
+    On the IntelliPlan connect page, the student enters their school's Blackboard Learn URL (e.g. `https://learn.myschool.edu`).
+  </Step>
+  <Step title="Authorization redirect">
+    IntelliPlan redirects to the institution's Blackboard authorization endpoint with `BLACKBOARD_APP_KEY` as `client_id` and the configured `BLACKBOARD_REDIRECT_URI`.
+  </Step>
+  <Step title="Student signs in to Blackboard">
+    The student authenticates with their institutional Blackboard credentials and approves IntelliPlan's requested scopes.
+  </Step>
+  <Step title="Code exchange">
+    Blackboard redirects to `BLACKBOARD_REDIRECT_URI` with a `code`. IntelliPlan exchanges it for an access token and refresh token using `BLACKBOARD_APP_KEY` and `BLACKBOARD_APP_SECRET`.
+  </Step>
+  <Step title="Token storage and sync">
+    Tokens are stored encrypted and used for ongoing gradebook data fetches. The `offline` scope ensures a refresh token is issued so the connection does not expire after the first hour.
+  </Step>
+</Steps>
+
+## Diagnostic Tool
+
+IntelliPlan includes a `blackboard_doctor.py` script that validates your Blackboard environment variable configuration without printing any secret values:
+
+```bash
+# Check configuration against the default developer portal
+python scripts/blackboard_doctor.py
+
+# Check against a specific institution's Learn URL
+python scripts/blackboard_doctor.py https://learn.myschool.edu
+```
+
+The script reports:
+- Which environment variables are set vs. missing
+- Whether `BLACKBOARD_APP_KEY` and `BLACKBOARD_APPLICATION_ID` appear to be swapped (a common misconfiguration)
+- Whether the `offline` scope is present
+- Whether the redirect URI is configured
+
+Run this before debugging any "invalid_client" errors in the OAuth flow.
+
+## Connection Management
+
+```http
+GET  /api/lms/status/blackboard
+POST /api/lms/blackboard/sync
+POST /api/lms/disconnect/blackboard
+```
+
+## Troubleshooting
+
+<Accordion title="'invalid client_id' after the student signs in to Blackboard">
+  This almost always means `BLACKBOARD_APP_KEY` contains the Application ID (UUID) instead of the Application Key. Run `python scripts/blackboard_doctor.py` to verify which variables are set and whether any conflict is detected.
+</Accordion>
+
+<Accordion title="The connect page shows 'your school hasn't approved this yet'">
+  This is expected behavior — IntelliPlan detected that the institution has not completed the REST API Integrations registration. The page displays the exact steps for the school's Blackboard administrator. Have the student forward those instructions to their IT department or Blackboard admin.
+</Accordion>
+
+<Accordion title="The connection works but expires after an hour">
+  The `offline` scope is missing from `BLACKBOARD_SCOPE`. Without it, Blackboard does not issue a refresh token and the access token expires without any way to renew it. Set `BLACKBOARD_SCOPE=read offline` and have the student reconnect.
+</Accordion>

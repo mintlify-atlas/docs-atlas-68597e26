@@ -1,0 +1,487 @@
+---
+title: "LMS and Calendar Integration REST Endpoints"
+sidebarTitle: "Integrations API"
+description: "Connect, disconnect, sync, and check status for Canvas, Google Classroom, Blackboard, Moodle, Google Calendar, and Notion via REST endpoints."
+---
+
+IntelliPlan's integration layer connects to six school platforms (Canvas, Google Classroom, StudentVue, Schoology, Blackboard, Moodle), Google Calendar, and Notion. The integration REST endpoints let you check which providers are available, start OAuth flows or submit manual credentials, sync assignments on demand, and disconnect a provider. The unified task feed (`GET /tasks/unified`) and live assignments feed (`GET /live`) sit on top of all these connections and return merged data regardless of which platforms are active. All integration endpoints require an active login session or appropriate API credentials.
+
+<Note>
+LMS connections that use OAuth (Google Classroom, Blackboard) involve a browser redirect flow. The `/api/lms/connect/<provider>` endpoint returns a redirect URL; the browser must follow it. Moodle uses a token-based manual connection that does not require a browser redirect. Canvas and StudentVue connect via API token pasted in Settings.
+</Note>
+
+---
+
+## Provider Registry
+
+### GET /api/lms/providers — List All Known Providers
+
+Returns metadata for every LMS provider the IntelliPlan registry knows about, including whether the provider is configured (OAuth credentials present) on this server instance. This endpoint is public — no authentication required. It is also used by the marketing page to show which integrations are available.
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/api/lms/providers
+```
+
+```json title="200 OK"
+{
+  "providers": [
+    {
+      "key": "google_classroom",
+      "name": "Google Classroom",
+      "configured": true,
+      "connect_method": "oauth"
+    },
+    {
+      "key": "blackboard",
+      "name": "Blackboard Learn",
+      "configured": true,
+      "connect_method": "oauth"
+    },
+    {
+      "key": "moodle",
+      "name": "Moodle",
+      "configured": true,
+      "connect_method": "manual"
+    }
+  ]
+}
+```
+
+<ResponseField name="providers" type="array">
+  Array of provider descriptor objects.
+
+  <Expandable title="Provider descriptor fields">
+    <ResponseField name="key" type="string">
+      Stable provider identifier used in all other LMS endpoints (e.g. `"google_classroom"`, `"blackboard"`, `"moodle"`).
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Human-readable provider name.
+    </ResponseField>
+    <ResponseField name="configured" type="boolean">
+      Whether the server has credentials configured for this provider. When `false`, the connect flow will return a `"pending"` status.
+    </ResponseField>
+    <ResponseField name="connect_method" type="string">
+      How the provider connects: `"oauth"` for redirect-based OAuth flows, `"manual"` for token-paste flows.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### GET /api/lms/status — User's Connected Providers
+
+Returns which LMS providers the authenticated user is connected to, along with last sync timestamp and sync count for each. Merges the registry's full provider list with the user's connection state so the response always covers all known providers.
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/api/lms/status \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+```json title="200 OK"
+{
+  "providers": [
+    {
+      "key": "google_classroom",
+      "name": "Google Classroom",
+      "connected": true,
+      "last_synced_at": "2025-02-13T18:42:00Z",
+      "last_sync_count": 14
+    },
+    {
+      "key": "blackboard",
+      "name": "Blackboard Learn",
+      "connected": false
+    },
+    {
+      "key": "moodle",
+      "name": "Moodle",
+      "connected": false
+    }
+  ]
+}
+```
+
+---
+
+## Connecting Providers
+
+### POST /api/lms/connect/\{provider\} — Start OAuth or Return Manual-Connect Metadata
+
+Initiates a connection flow for the given LMS provider. The response shape varies by provider:
+
+- **Google Classroom:** Returns an `auth_url` to redirect the browser to for OAuth.
+- **Blackboard:** Returns either `need_institution` (prompts for the school's Blackboard URL) or `auth_url` once the institution URL is supplied.
+- **Moodle:** Returns `status: "manual"` with a `form_endpoint` directing the client to submit credentials to `/api/lms/connect/moodle/manual`.
+
+<Tabs>
+  <Tab title="Google Classroom">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/api/lms/connect/google_classroom \
+      -H "Cookie: session=YOUR_SESSION_COOKIE"
+    ```
+    ```json title="200 OK — redirect required"
+    {
+      "status": "redirect",
+      "auth_url": "https://accounts.google.com/o/oauth2/auth?client_id=...&scope=...&redirect_uri=..."
+    }
+    ```
+  </Tab>
+  <Tab title="Blackboard (step 1 — get institution URL)">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/api/lms/connect/blackboard \
+      -H "Cookie: session=YOUR_SESSION_COOKIE"
+    ```
+    ```json title="200 OK — needs institution URL"
+    {
+      "status": "need_institution",
+      "provider": "blackboard",
+      "message": "Enter your school's Blackboard URL (e.g. https://learn.myschool.edu)."
+    }
+    ```
+  </Tab>
+  <Tab title="Blackboard (step 2 — with institution URL)">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/api/lms/connect/blackboard \
+      -H "Content-Type: application/json" \
+      -H "Cookie: session=YOUR_SESSION_COOKIE" \
+      -d '{"institution_url": "https://learn.myschool.edu"}'
+    ```
+    ```json title="200 OK — redirect ready"
+    {
+      "status": "redirect",
+      "auth_url": "https://learn.myschool.edu/learn/api/public/v1/oauth2/authorizationcode?..."
+    }
+    ```
+  </Tab>
+  <Tab title="Moodle">
+    ```bash title="cURL"
+    curl -X POST https://intelliplan.tech/api/lms/connect/moodle \
+      -H "Cookie: session=YOUR_SESSION_COOKIE"
+    ```
+    ```json title="200 OK — manual form"
+    {
+      "status": "manual",
+      "provider": "moodle",
+      "form_endpoint": "/api/lms/connect/moodle/manual"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="provider" type="string" required>
+  Provider key. Accepted values: `"google_classroom"`, `"blackboard"`, `"moodle"`.
+</ParamField>
+
+<ParamField body="institution_url" type="string">
+  Required for Blackboard. The full URL of the school's Blackboard Learn instance (e.g. `"https://learn.myschool.edu"`). Deep links and bare hostnames are normalized automatically.
+</ParamField>
+
+---
+
+### POST /api/lms/connect/moodle/manual — Connect Moodle with Token
+
+Connects a Moodle instance by accepting the site URL and a user-scoped web-services token. The endpoint validates the credentials by calling Moodle's `core_webservice_get_site_info` function before storing them, so invalid tokens are rejected immediately rather than silently failing during the first sync.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/lms/connect/moodle/manual \
+  -H "Content-Type: application/json" \
+  -H "Cookie: session=YOUR_SESSION_COOKIE" \
+  -d '{
+    "moodle_url": "https://moodle.myschool.edu",
+    "ws_token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+  }'
+```
+
+<ParamField body="moodle_url" type="string" required>
+  The base URL of the Moodle instance. `http://` or `https://` prefix is optional — it defaults to `https://` if omitted. Trailing slashes are stripped automatically.
+</ParamField>
+
+<ParamField body="ws_token" type="string" required>
+  The Moodle web-services token for the student's account. Generated in Moodle under **My profile settings → Security keys**.
+</ParamField>
+
+```json title="200 OK"
+{
+  "status": "ok",
+  "fullname": "Jane Smith",
+  "username": "jsmith",
+  "site": "Myschool Moodle"
+}
+```
+
+---
+
+## Per-Provider Status and Disconnect
+
+### GET /api/lms/status/google\_classroom · /blackboard · /moodle
+
+Returns the connection status for a single provider. Use these for per-provider status checks in a settings UI.
+
+<Tabs>
+  <Tab title="Google Classroom">
+    ```bash
+    curl -X GET https://intelliplan.tech/api/lms/status/google_classroom \
+      -H "Cookie: session=YOUR_SESSION_COOKIE"
+    ```
+    ```json
+    {
+      "status": "ok",
+      "connected": true,
+      "email": "student@gmail.com",
+      "connected_at": "2025-01-20T14:32:00Z"
+    }
+    ```
+  </Tab>
+  <Tab title="Blackboard">
+    ```bash
+    curl -X GET https://intelliplan.tech/api/lms/status/blackboard \
+      -H "Cookie: session=YOUR_SESSION_COOKIE"
+    ```
+    ```json
+    {
+      "status": "ok",
+      "connected": true,
+      "institution_url": "https://learn.myschool.edu",
+      "username": "jsmith",
+      "connected_at": "2025-01-25T10:00:00Z"
+    }
+    ```
+  </Tab>
+  <Tab title="Moodle">
+    ```bash
+    curl -X GET https://intelliplan.tech/api/lms/status/moodle \
+      -H "Cookie: session=YOUR_SESSION_COOKIE"
+    ```
+    ```json
+    {
+      "status": "ok",
+      "connected": true,
+      "moodle_url": "https://moodle.myschool.edu",
+      "fullname": "Jane Smith",
+      "connected_at": "2025-02-01T08:15:00Z"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/lms/disconnect/google\_classroom · /blackboard · /moodle
+
+Disconnects the specified provider, deleting the stored OAuth tokens or Moodle credentials. This is an idempotent operation — disconnecting a provider that is already disconnected returns `status: "ok"` without error.
+
+```bash title="Disconnect Google Classroom"
+curl -X POST https://intelliplan.tech/api/lms/disconnect/google_classroom \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+```json title="200 OK"
+{"status": "ok"}
+```
+
+---
+
+## Registry-Based Sync and Disconnect
+
+The `lms_sync` blueprint exposes generic sync and disconnect endpoints that work for any provider registered in the LMS registry, identified by the provider `key`.
+
+### POST /api/lms/\{key\}/sync — Sync One Provider
+
+Pulls the latest assignments from one connected provider now. The endpoint refreshes OAuth tokens if the provider supports it, then calls the provider's sync adapter and returns the count of assignments fetched. The `last_synced_at` and `last_sync_count` fields on the connection row are updated.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/lms/google_classroom/sync \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+<ParamField path="key" type="string" required>
+  Provider key from `GET /api/lms/providers` (e.g. `"google_classroom"`, `"blackboard"`, `"moodle"`).
+</ParamField>
+
+```json title="200 OK"
+{
+  "synced": 14
+}
+```
+
+<ResponseField name="synced" type="integer">
+  Number of assignments fetched and stored from this provider in this sync run.
+</ResponseField>
+
+Returns HTTP `404` if `key` is not a known provider, and `409` if the provider is not connected (no token row exists).
+
+---
+
+### POST /api/lms/\{key\}/disconnect — Disconnect via Registry
+
+Removes the stored LMS token row for the specified provider key. This is the generic registry-based disconnect, complementing the per-provider disconnect endpoints above.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/api/lms/google_classroom/disconnect \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+```json title="200 OK"
+{"ok": true}
+```
+
+---
+
+## Unified Task Feed
+
+### GET /live — Live Assignments from Connected Platform
+
+Fetches live assignments from the currently connected school platform. This is the raw internal feed — the same data `GET /api/v1/assignments` proxies. Manual tasks and Notion tasks are excluded.
+
+```bash title="cURL — session required"
+curl -X GET https://intelliplan.tech/live \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+---
+
+### GET /tasks/unified — All Tasks Merged
+
+Returns all tasks merged from all sources — platform assignments, manual tasks, and Notion-synced tasks — grouped into three buckets: `overdue`, `today`, and `upcoming`. This is the internal feed that `GET /api/v1/tasks` flattens and exposes to API clients.
+
+```bash title="cURL — session required"
+curl -X GET https://intelliplan.tech/tasks/unified \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+```json title="200 OK"
+{
+  "overdue": [
+    {"title": "Lab Report", "course": "Chemistry", "due_date": "2025-02-12", "source": "canvas"}
+  ],
+  "today": [
+    {"title": "Chapter 5 Quiz", "course": "AP Biology", "due_date": "2025-02-14", "source": "canvas"}
+  ],
+  "upcoming": [
+    {"title": "Review flashcards", "course": "AP Biology", "due_date": "2025-02-20", "source": "manual"}
+  ]
+}
+```
+
+---
+
+## Google Calendar
+
+### POST /calendar/export — Export Schedule to Google Calendar
+
+Exports a generated study schedule to the student's Google Calendar. Creates one calendar event per study block. Requires an active Google Calendar OAuth connection (configured in Settings → Integrations → Google Calendar).
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/calendar/export \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schedule_data": [
+      {
+        "date": "2025-02-14",
+        "blocks": [
+          {"start": "19:00", "end": "20:00", "task": "History Essay Draft", "type": "study"}
+        ]
+      }
+    ],
+    "skip_overlaps": false
+  }'
+```
+
+<ParamField body="schedule_data" type="array" required>
+  The schedule to export, in the format returned by `GET /api/v1/schedule` or `POST /api/v1/schedule/generate`.
+</ParamField>
+
+<ParamField body="skip_overlaps" type="boolean" default={false}>
+  When `true`, fetches the student's existing Google Calendar events and skips creating blocks that overlap with them.
+</ParamField>
+
+```json title="200 OK"
+{
+  "status": "ok",
+  "created": 8,
+  "skipped": 2
+}
+```
+
+---
+
+## Notion Integration
+
+### POST /notion/connect — Connect Notion
+
+Connects a Notion workspace by accepting a Notion integration token. The token is validated against Notion's API (`users.me`) before being stored. On success, returns the list of databases the integration can see. If no databases are shared yet, the response includes an instructional warning.
+
+```bash title="cURL"
+curl -X POST https://intelliplan.tech/notion/connect \
+  -H "Content-Type: application/json" \
+  -d '{"token": "secret_abc123..."}'
+```
+
+<ParamField body="token" type="string" required>
+  A Notion internal integration token (starts with `secret_`). Create one at [notion.so/my-integrations](https://www.notion.so/my-integrations) and share your task database with it.
+</ParamField>
+
+```json title="200 OK"
+{
+  "status": "ok",
+  "databases": [
+    {"id": "abc123-def456", "title": "My Tasks"},
+    {"id": "xyz789-uvw012", "title": "IntelliPlan Tasks"}
+  ]
+}
+```
+
+---
+
+### GET /notion/tasks — Fetch Notion Tasks
+
+Returns all tasks from the student's connected Notion database. Returns `connected: false` (not an error) when Notion is not connected or no database has been selected yet, so the caller can handle the unconnected state gracefully.
+
+```bash title="cURL"
+curl -X GET https://intelliplan.tech/notion/tasks \
+  -H "Cookie: session=YOUR_SESSION_COOKIE"
+```
+
+```json title="200 OK"
+{
+  "connected": true,
+  "tasks": [
+    {
+      "id": "notion_page_abc123",
+      "title": "Write intro paragraph",
+      "due_date": "2025-02-18",
+      "priority": "High",
+      "done": false
+    }
+  ]
+}
+```
+
+---
+
+## Integration Overview
+
+<CardGroup cols={2}>
+  <Card title="Google Classroom" icon="google">
+    OAuth 2.0. Imports active courses and coursework. Start flow via `POST /api/lms/connect/google_classroom`.
+  </Card>
+  <Card title="Blackboard Learn" icon="school">
+    OAuth 2.0 (3LO), per-institution. School admins must register IntelliPlan's Application ID under System Admin → REST API Integrations with End User Access enabled.
+  </Card>
+  <Card title="Moodle" icon="plug">
+    Manual token connection. Student pastes their Moodle web-services token via `POST /api/lms/connect/moodle/manual`. No redirect required.
+  </Card>
+  <Card title="Google Calendar" icon="calendar">
+    One-click schedule export via `POST /calendar/export`. Requires a Google OAuth connection established through Settings → Integrations.
+  </Card>
+  <Card title="Notion" icon="file-lines">
+    Two-way task sync. Connect via `POST /notion/connect` with an internal integration token. Tasks appear in the unified feed alongside LMS assignments.
+  </Card>
+  <Card title="Canvas & StudentVue" icon="graduation-cap">
+    Connected via API token pasted in Settings → Integrations. No OAuth redirect — connection is validated on token submission.
+  </Card>
+</CardGroup>
+
+<Warning>
+Blackboard integration requires the school's Blackboard administrator to register IntelliPlan's Application ID under **System Admin → Integrations → REST API Integrations** with **End User Access: Yes**. Until this is done, `/api/lms/connect/blackboard` will show the student the exact admin setup steps instead of starting an OAuth flow that cannot complete.
+</Warning>

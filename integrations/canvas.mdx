@@ -1,0 +1,140 @@
+---
+title: "Connect Canvas LMS to IntelliPlan"
+sidebarTitle: "Canvas"
+description: "Import assignments, due dates, points, and course names from Canvas LMS into IntelliPlan via OAuth 2.0 Developer Key — including multi-institution key overrides."
+---
+
+Canvas LMS is IntelliPlan's most-used school integration. Once connected, IntelliPlan fetches every assignment from every enrolled course — including title, due date, points possible, and course name — and surfaces them on the dashboard ranked by AI priority scoring. The connection uses Canvas's standard OAuth 2.0 Developer Key flow, which means students authorize once and IntelliPlan handles token refresh automatically from that point forward. If your school runs its own Canvas instance rather than the public Instructure SaaS, IntelliPlan also supports per-institution credential overrides so students at any school can connect.
+
+## What Gets Imported
+
+When Canvas is connected, IntelliPlan imports:
+
+- **Assignment titles** — used for priority scoring and display
+- **Due dates** — the primary input for the AI scheduler
+- **Points possible** — weighted into urgency calculations alongside due date proximity
+- **Course names** — used to group assignments in the Classes View and AI explanations
+- **All pages of assignments** — IntelliPlan follows Canvas's RFC 5988 `Link` headers to retrieve every page, so courses with more than 100 assignments are not silently truncated
+
+<Note>
+  IntelliPlan requests assignments using `per_page=100` and follows pagination up to 50 pages (5,000 assignments). The page limit is a runaway guard, not a product constraint.
+</Note>
+
+## Environment Variables
+
+Add these to your `.env` file (or your Railway/Render environment dashboard for production):
+
+```env title=".env"
+# Canvas OAuth — Developer Key credentials
+CANVAS_CLIENT_ID=
+CANVAS_CLIENT_SECRET=
+CANVAS_REDIRECT_URI=https://intelliplan.tech/oauth/canvas/callback
+CANVAS_DEFAULT_BASE=https://canvas.instructure.com
+```
+
+| Variable | Required | Description |
+|---|---|---|
+| `CANVAS_CLIENT_ID` | Yes | The numeric ID of your Developer Key |
+| `CANVAS_CLIENT_SECRET` | Yes | The secret string shown in the Developer Key list |
+| `CANVAS_REDIRECT_URI` | Yes | Must match the redirect URI registered on the Developer Key |
+| `CANVAS_DEFAULT_BASE` | No | The Canvas instance to use when the student doesn't specify one. Defaults to `https://canvas.instructure.com` |
+
+## Registering a Developer Key
+
+Canvas OAuth is per-instance — every Canvas deployment (Instructure SaaS, school-hosted, Canvas Free for Teachers) issues its own Developer Keys independently. To enable Canvas sign-in for students on the public `canvas.instructure.com`:
+
+<Steps>
+  <Step title="Sign in to Canvas">
+    Go to [canvas.instructure.com](https://canvas.instructure.com) and sign in with a teacher or admin account. You must have developer key management access.
+  </Step>
+  <Step title="Open Developer Keys">
+    Navigate to **Admin → Developer Keys → +Developer Key → +API Key**.
+  </Step>
+  <Step title="Fill in the key details">
+    - **Key Name:** `IntelliPlan`
+    - **Redirect URIs:** `https://intelliplan.tech/oauth/canvas/callback`
+    - **Scopes:** Leave unscoped for full access, or narrow to:
+      ```
+      url:GET|/api/v1/courses
+      url:GET|/api/v1/courses/:course_id/assignments
+      url:GET|/api/v1/users/:user_id/enrollments
+      ```
+  </Step>
+  <Step title="Save and enable the key">
+    Click **Save**, then in the Developer Keys list find your new key and flip its toggle to **ON**.
+  </Step>
+  <Step title="Copy the credentials">
+    - The **ID** column → `CANVAS_CLIENT_ID`
+    - The **Show Key** button → `CANVAS_CLIENT_SECRET`
+  </Step>
+</Steps>
+
+## How the OAuth Flow Works
+
+When a student clicks **Connect Canvas**, IntelliPlan redirects them to:
+
+```
+https://<canvas_base>/login/oauth2/auth
+  ?client_id=<CANVAS_CLIENT_ID>
+  &redirect_uri=<CANVAS_REDIRECT_URI>
+  &response_type=code
+  &state=<csrf_token>
+```
+
+After the student approves access, Canvas redirects back to `CANVAS_REDIRECT_URI` with a `code` parameter. IntelliPlan exchanges that code at:
+
+```
+POST https://<canvas_base>/login/oauth2/token
+```
+
+The resulting access token and refresh token are stored encrypted in the database (using the `DATA_ENCRYPTION_KEY` Fernet key if configured) and refreshed automatically on expiry.
+
+## Per-Institution Key Overrides
+
+A single Developer Key is only valid against the Canvas instance that issued it. If students at `canvas.school.edu` try to connect using a key registered on `canvas.instructure.com`, Canvas will reject the authorization. For schools running their own Canvas instances, IntelliPlan supports per-host credential overrides.
+
+The override variable names are built by taking the hostname, replacing dots and hyphens with underscores, and uppercasing the result:
+
+```env title=".env (multi-institution)"
+# Public Instructure SaaS (fallback)
+CANVAS_CLIENT_ID=12345
+CANVAS_CLIENT_SECRET=abc...
+
+# school.edu override
+CANVAS_CLIENT_ID_CANVAS_SCHOOL_EDU=67890
+CANVAS_CLIENT_SECRET_CANVAS_SCHOOL_EDU=xyz...
+
+# another-college.edu override
+CANVAS_CLIENT_ID_CANVAS_ANOTHER_COLLEGE_EDU=11111
+CANVAS_CLIENT_SECRET_CANVAS_ANOTHER_COLLEGE_EDU=def...
+```
+
+When a student enters `https://canvas.school.edu` as their Canvas URL, IntelliPlan resolves the hostname to `CANVAS_SCHOOL_EDU`, checks for `CANVAS_CLIENT_ID_CANVAS_SCHOOL_EDU`, and falls back to the global `CANVAS_CLIENT_ID` only if no override is found.
+
+<Tip>
+  Ask the school's Canvas administrator to register a Developer Key on the institution's Canvas instance using the same redirect URI and scopes described above, then share the resulting ID and secret so you can add the override env vars.
+</Tip>
+
+## Canvas API Reference
+
+IntelliPlan uses the Canvas REST API v1. The base URL for all API calls is constructed as:
+
+```python
+f"{canvas_base.rstrip('/')}/api/v1"
+```
+
+Where `canvas_base` defaults to the value of `CANVAS_DEFAULT_BASE` (or `https://canvas.instructure.com` if unset). All requests include an `Authorization: Bearer <token>` header using the stored OAuth access token.
+
+## Troubleshooting
+
+<Accordion title="The student gets 'invalid_client' on the Canvas login page">
+  The `CANVAS_CLIENT_ID` does not match what Canvas has on record for that instance. Check that the Developer Key is toggled **ON** in the Canvas Developer Keys list, and verify you are using the numeric **ID** column value — not the key string.
+</Accordion>
+
+<Accordion title="Assignments from some courses are missing">
+  If a course has more than 100 assignments, earlier versions of the helper would silently drop the remainder. IntelliPlan's paginated `_get_list` function resolves this by following `Link: rel=next` headers until all pages are fetched. If assignments are still missing, confirm that the connected account is enrolled in the relevant courses.
+</Accordion>
+
+<Accordion title="The school uses a self-hosted Canvas and connection fails">
+  You need a Developer Key registered on the school's own Canvas instance, not on `canvas.instructure.com`. Add per-institution override variables as described in the **Per-Institution Key Overrides** section above.
+</Accordion>

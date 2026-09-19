@@ -1,0 +1,159 @@
+{
+  "projectType": "saas",
+  "projectName": "IntelliPlan",
+  "projectDescription": "IntelliPlan is an AI-powered student planner that connects to school platforms (Canvas, Google Classroom, StudentVue, Schoology, Blackboard, Moodle), auto-imports assignments, generates personalized study schedules, and includes an adaptive AI tutor — helping students stay organized and learn more effectively.",
+  "theme": "almond",
+  "primaryColor": "#63a5d2",
+  "lightColor": "#111212",
+  "darkColor": "#e2e8ed",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "self-hosting"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/dashboard",
+              "features/scheduler",
+              "features/study-and-learn",
+              "features/plani-tutor",
+              "features/grades"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/overview",
+              "integrations/canvas",
+              "integrations/google-classroom",
+              "integrations/studentvue",
+              "integrations/schoology",
+              "integrations/blackboard",
+              "integrations/moodle",
+              "integrations/google-calendar",
+              "integrations/notion"
+            ]
+          },
+          {
+            "group": "Platform Clients",
+            "pages": [
+              "clients/chrome-extension",
+              "clients/mobile-app",
+              "clients/desktop-app"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/ai-providers",
+              "configuration/notifications",
+              "configuration/email"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/assignments",
+              "api/schedule",
+              "api/tutor",
+              "api/study",
+              "api/grades",
+              "api/streak",
+              "api/integrations-api"
+            ]
+          },
+          {
+            "group": "Developer Tools",
+            "pages": [
+              "api/api-keys",
+              "api/mcp-server"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Auto-imports assignments from Canvas, Google Classroom, StudentVue, Schoology, Blackboard, and Moodle",
+    "AI-generated weekly study schedules exported to Google Calendar",
+    "Adaptive AI tutor (Plani) with student learning profiles, mastery tracking, and mistake detection",
+    "Flashcard and quiz generation from uploaded notes (PDF, DOCX, TXT, images)",
+    "Spaced repetition system (SRS) for active recall and mastery tracking",
+    "Grade modeler to simulate 'what if I score X%?' scenarios",
+    "Notion two-way task sync",
+    "Push notifications for assignment deadline reminders",
+    "Chrome Extension with badge count and Canvas/StudentVue page injection",
+    "Progressive Web App (PWA) for Android and iOS",
+    "Native desktop app for Windows, macOS, and Linux",
+    "MCP server for AI assistant integrations (Claude Desktop, Cursor)",
+    "Task-completion streak system with streak freezes and analytics",
+    "Public REST API with scoped API keys for third-party integrations"
+  ],
+  "publicApiSurface": [
+    "GET  /api/v1/assignments",
+    "POST /api/v1/tasks",
+    "POST /api/v1/assignments/dismiss",
+    "POST /api/v1/assignments/restore",
+    "GET  /api/v1/courses",
+    "GET  /api/v1/grades",
+    "GET  /api/v1/schedule",
+    "POST /api/v1/schedule/generate",
+    "GET  /api/v1/tests",
+    "POST /api/v1/tests",
+    "DELETE /api/v1/tests",
+    "GET  /api/v1/streak",
+    "GET  /api/v1/me",
+    "PATCH /api/v1/identity",
+    "POST /api/v1/auth/token",
+    "POST /api/v1/push/register",
+    "POST /api/v1/push/unregister",
+    "POST /api/tutor",
+    "GET  /api/tutor/adaptive/profile",
+    "POST /api/tutor/adaptive/profile",
+    "GET  /api/tutor/adaptive/dashboard",
+    "POST /api/tutor/adaptive/modality",
+    "POST /api/tutor/adaptive/summarize",
+    "GET  /api/tutor/adaptive/memory-imports",
+    "POST /api/tutor/adaptive/memory-imports",
+    "POST /api/tutor/adaptive/mistakes/<id>/resolve",
+    "POST /api/chatbot",
+    "POST /study/generate",
+    "POST /study/evaluate",
+    "POST /study/analyze-image",
+    "POST /notes/<id>/summarize",
+    "GET  /live",
+    "GET  /tasks/unified",
+    "GET  /grades/data",
+    "POST /generate_schedule",
+    "POST /calendar/export",
+    "POST /notion/connect",
+    "GET  /notion/tasks",
+    "POST /api/lms/connect/<provider>",
+    "GET  /api/lms/status",
+    "GET  /api/lms/providers",
+    "POST /api/lms/<key>/sync",
+    "POST /api/lms/<key>/disconnect"
+  ]
+}

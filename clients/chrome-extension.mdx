@@ -1,0 +1,227 @@
+---
+title: "IntelliPlan Chrome Extension: Badge and Page Inject"
+sidebarTitle: "Chrome Extension"
+description: "See pending assignment counts on the browser icon and inject IntelliPlan controls into Canvas and StudentVue pages with the Chrome Extension."
+---
+
+The IntelliPlan Chrome Extension brings your planner right into the browser you already use for schoolwork. It displays a live badge count of pending assignments on the extension icon so you always know your workload at a glance, and it injects a quick-access panel directly into Canvas (`*.instructure.com`) and StudentVue (`*.edupoint.com`) pages — no tab-switching required. The extension authenticates with your existing IntelliPlan account and communicates exclusively with `intelliplan.tech` over HTTPS.
+
+## What the Extension Does
+
+<CardGroup cols={2}>
+  <Card title="Assignment Badge" icon="bell">
+    The extension icon shows a live badge with the count of pending assignments fetched from `/extension/tasks`. The count refreshes automatically via the service worker background script.
+  </Card>
+  <Card title="Page Injection" icon="code">
+    Content scripts run at `document_idle` on Canvas, StudentVue, PowerSchool, Aeries, Schoology, and several other SIS domains, surfacing an IntelliPlan panel without leaving the page.
+  </Card>
+  <Card title="Account Login" icon="user">
+    Sign in directly from the popup with your IntelliPlan email and password. Your token is persisted in `chrome.storage.local` so you stay logged in across browser restarts.
+  </Card>
+  <Card title="Quick Actions" icon="bolt">
+    Dismiss tasks, view your saved schedule, and check grades — all from the extension popup, backed by the same API endpoints the main web app uses.
+  </Card>
+</CardGroup>
+
+## Installing in Developer Mode
+
+The extension ships as source in the `extension/` directory of the repository. Chrome's Developer Mode lets you load it directly without publishing to the Web Store.
+
+<Steps>
+  <Step title="Open Chrome Extensions">
+    Navigate to `chrome://extensions` in your Chrome browser (or any Chromium-based browser such as Edge or Brave).
+  </Step>
+  <Step title="Enable Developer Mode">
+    Toggle **Developer mode** on using the switch in the top-right corner of the extensions page. Three new buttons appear: **Load unpacked**, **Pack extension**, and **Update**.
+  </Step>
+  <Step title="Load the Extension">
+    Click **Load unpacked** and select the `extension/` directory from your cloned IntelliPlan repository. Chrome will immediately register the extension and show its icon in the toolbar.
+  </Step>
+  <Step title="Sign In">
+    Click the IntelliPlan toolbar icon. The popup presents a login form. Enter your IntelliPlan email and password — the extension posts your credentials to `/api/auth/login` and stores the returned bearer token in `chrome.storage.local` under the key `intelliplan_token`.
+  </Step>
+  <Step title="Visit a Supported Page">
+    Navigate to any Canvas, StudentVue, Schoology, PowerSchool, Aeries, Infinite Campus, Skyward, or eSchoolPlus page. The content scripts load automatically and inject the IntelliPlan panel.
+  </Step>
+</Steps>
+
+<Note>
+  Developer Mode extensions remain loaded across Chrome restarts. If Chrome flags the extension as "unpacked", that is expected behaviour — it simply means the extension was not installed from the Chrome Web Store.
+</Note>
+
+## Manifest Overview
+
+The extension is a **Manifest V3** extension (`manifest_version: 3`, version `1.1.0`). Key declarations from `extension/manifest.json`:
+
+```json title="extension/manifest.json"
+{
+  "manifest_version": 3,
+  "name": "IntelliPlan",
+  "version": "1.1.0",
+  "description": "AI-powered study planning for students",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "IntelliPlan"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.instructure.com/*",
+        "*://*.edupoint.com/*",
+        "*://*.powerschool.com/*",
+        "*://*.aeries.net/*",
+        "*://*.infinitecampus.com/*",
+        "*://*.infinitecampus.org/*",
+        "*://*.skyward.com/*",
+        "*://*.eschoolplus.com/*",
+        "*://*.schoology.com/*"
+      ],
+      "js": [
+        "scrapers/router.js",
+        "scrapers/powerschool.js",
+        "scrapers/aeries.js",
+        "scrapers/infinitecampus.js",
+        "scrapers/skyward.js",
+        "scrapers/eschoolplus.js",
+        "scrapers/generic.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": [
+    "https://intelliplan.tech/*",
+    "https://www.intelliplan.tech/*"
+  ]
+}
+```
+
+The `storage`, `alarms`, and `notifications` permissions power local token persistence, periodic badge refresh, and browser notifications respectively. No tab or browsing-history permissions are requested.
+
+## Authentication Flow
+
+The popup manages its own auth state using `chrome.storage.local`. The token key (`intelliplan_token`) and user key (`intelliplan_user`) are set on successful login and cleared on sign-out.
+
+```js title="extension/popup.js (auth constants)"
+const BASE_URL = "https://intelliplan.tech";
+
+const AUTH_ENDPOINTS = {
+  login:    "/api/auth/login",
+  register: "/api/auth/register",
+  me:       "/api/auth/me",
+  logout:   "/api/auth/logout"
+};
+
+const STORAGE_KEYS = {
+  token: "intelliplan_token",
+  user:  "intelliplan_user"
+};
+```
+
+Every subsequent request attaches the token as a `Bearer` header:
+
+```js title="extension/popup.js (API fetch helper)"
+async function apiFetch(path, options = {}) {
+  const session = await getSession();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+
+  if (session.token) {
+    headers.Authorization = `Bearer ${session.token}`;
+  }
+
+  return fetch(BASE_URL + path, {
+    credentials: "omit",
+    ...options,
+    headers
+  });
+}
+```
+
+<Info>
+  `credentials: "omit"` is intentional — the extension communicates via bearer token only, never relying on session cookies, which keeps the auth model portable across browser profiles.
+</Info>
+
+## Extension API Endpoints
+
+The extension uses a dedicated set of endpoints on the IntelliPlan backend. All require a valid `Authorization: Bearer <token>` header obtained from the login endpoint.
+
+<Accordion title="POST /extension/login">
+  Authenticates the extension with an email and password, returning a bearer token for subsequent requests. This is called when the user submits the login form in `popup.html`.
+
+  **Request body**
+  ```json
+  {
+    "email": "student@example.edu",
+    "password": "••••••••"
+  }
+  ```
+
+  **Response**
+  ```json
+  {
+    "token": "<bearer-token>",
+    "user": { "id": 42, "name": "Alex", "email": "student@example.edu" }
+  }
+  ```
+</Accordion>
+
+<Accordion title="GET /extension/tasks">
+  Returns the list of pending assignments used to compute the toolbar badge count. The background service worker polls this endpoint on a schedule using the `alarms` permission.
+
+  **Response**
+  ```json
+  {
+    "tasks": [
+      { "id": "abc123", "title": "Chapter 5 Reading", "due": "2025-06-10", "course": "AP Biology" }
+    ],
+    "count": 1
+  }
+  ```
+</Accordion>
+
+<Accordion title="GET /extension/schedule">
+  Returns the student's saved AI-generated study schedule for display in the popup's schedule tab.
+</Accordion>
+
+<Accordion title="GET /extension/grades">
+  Returns per-course grade data pulled live from the connected school platform.
+</Accordion>
+
+<Accordion title="POST /extension/dismiss">
+  Marks a task as dismissed/completed directly from the extension popup, mirroring the `/dismiss` endpoint on the main site.
+
+  **Request body**
+  ```json
+  { "task_id": "abc123" }
+  ```
+</Accordion>
+
+## Supported School Platforms
+
+The content scripts cover every major SIS and LMS in use:
+
+| Domain Pattern | Platform |
+|---|---|
+| `*.instructure.com` | Canvas LMS |
+| `*.edupoint.com` | StudentVue / Synergy |
+| `*.powerschool.com` | PowerSchool |
+| `*.aeries.net` | Aeries SIS |
+| `*.infinitecampus.com` / `*.infinitecampus.org` | Infinite Campus |
+| `*.skyward.com` | Skyward |
+| `*.eschoolplus.com` | eSchoolPlus |
+| `*.schoology.com` | Schoology |
+
+<Tip>
+  If your school's Canvas instance uses a custom domain (e.g. `canvas.myschool.edu`), the content script will not auto-inject. Use the popup directly — it has full access to your tasks, schedule, and grades regardless of which page you're on.
+</Tip>
+
+## Options Page
+
+The extension includes an `options.html` options page, accessible via right-clicking the toolbar icon → **Options**. Use it to configure notification preferences and manage your linked IntelliPlan account.
