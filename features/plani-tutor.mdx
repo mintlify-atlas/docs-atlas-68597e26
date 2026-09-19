@@ -1,5 +1,5 @@
 ---
-title: "Plani: Adaptive AI Tutor Across All Subjects"
+title: "Plani: Adaptive AI Tutor Across All School Subjects"
 sidebarTitle: "Plani Tutor"
 description: "Plani is an adaptive AI tutor that builds a persistent model of how you learn — mastery scores, mistake patterns, modality routing, and durable memory."
 ---
@@ -93,7 +93,7 @@ The modality weights blend at **60% history, 40% newest reading**, so your detec
 
 ### Setting Your Modality
 
-```
+```http
 POST /api/tutor/adaptive/modality
 ```
 
@@ -144,7 +144,7 @@ Every Plani turn runs through three phases managed by `adaptive_tutor/engine.py`
 
 When you finish a tutoring session, call the summarize endpoint to write the session record and update your mastery scores:
 
-```
+```http
 POST /api/tutor/adaptive/summarize
 ```
 
@@ -168,12 +168,13 @@ Every entry point in `adaptive_tutor/engine.py` wraps its analysis passes in exc
 
 ## `adaptive_tutor/` Module Structure
 
-```
+```text
 adaptive_tutor/
 ├── engine.py     # Per-turn orchestration: prepare_turn, record_turn, summarize_conversation
 ├── store.py      # Persistent student model: six SQLAlchemy tables, lazy creation
 ├── modality.py   # Learning-modality routing and weight blending
 ├── analysis.py   # LLM-powered learner memory analysis and mistake extraction
+├── api.py        # API blueprint — adaptive tutor HTTP routes
 └── prompt.py     # Adaptive system-prompt builder
 ```
 

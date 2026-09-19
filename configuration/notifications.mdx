@@ -1,5 +1,5 @@
 ---
-title: "Push Notifications Setup with VAPID Keys"
+title: "Push Notifications and VAPID Key Setup for IntelliPlan"
 sidebarTitle: "Notifications"
 description: "Generate VAPID keys, configure the three push notification env vars, set up the 5-minute cron drain endpoint, and understand silencing and SMS delivery."
 ---
@@ -132,6 +132,7 @@ The sweep deduplicates on a `UNIQUE` constraint in the `notification_outbox` tab
 | `POST /cron/notifications` | Drain the push notification outbox | Every 5 minutes |
 | `POST /cron/send-reminders` | Sweep for upcoming deadlines and enqueue reminder notifications | Every 15 minutes |
 | `POST /cron/lifecycle-emails` | Send welcome emails and feedback requests | Daily at 16:00 UTC |
+| `POST /cron/weekly-newsletter` | Generate and send the weekly newsletter (Thursdays) | Thursdays at 16:00 UTC |
 
 ---
 

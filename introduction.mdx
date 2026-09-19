@@ -1,5 +1,5 @@
 ---
-title: "IntelliPlan: AI Study Planner for Every Student"
+title: "IntelliPlan: AI-Powered Study Planner for Students"
 sidebarTitle: "Introduction"
 description: "IntelliPlan pulls assignments from Canvas, Google Classroom, StudentVue, and more, then uses Gemini AI to build a personalized weekly study schedule."
 ---
@@ -78,15 +78,21 @@ IntelliPlan is a Python/Flask application backed by PostgreSQL in production (SQ
 
 | Layer | Technology |
 |---|---|
-| **Backend** | Python 3.11+, Flask |
-| **Database** | PostgreSQL (Railway production), SQLite (local dev) |
+| **Backend** | Python, Flask |
+| **Database** | PostgreSQL (production via Railway), SQLite (local dev) |
 | **ORM** | Flask-SQLAlchemy |
-| **Auth** | Flask-Login, Flask-Bcrypt, Google OAuth 2.0 (PKCE), JWT |
-| **AI — Scheduling, Study, Tutor** | Google Gemini 2.5 Flash (Groq Llama fallback) |
+| **Auth** | Flask-Login, Flask-Bcrypt, Google OAuth 2.0 (PKCE), JWT tokens |
+| **Sessions** | Flask-Session (SQLAlchemy-backed for persistence across Railway container restarts) |
+| **AI — Scheduling & Study** | Google Gemini 2.5 Flash (Groq Llama fallback) |
 | **AI — Vision / Image Notes** | Google Gemini 2.5 Flash (Groq Llama 4 Scout fallback) |
-| **School APIs** | Canvas REST, Google Classroom, StudentVue, Schoology, Blackboard Learn, Moodle Web Services |
-| **Push Notifications** | Web Push / VAPID via pywebpush |
-| **Frontend** | Vanilla HTML/CSS/JS, PWA (Android + iOS), Chrome Extension |
+| **AI — Tutor & Chatbot** | Google Gemini 2.5 Flash (Groq Llama fallback) |
+| **School APIs** | Canvas LMS REST API, Google Classroom API, StudentVue API, Schoology API, Blackboard Learn REST API, Moodle Web Services |
+| **Calendar** | Google Calendar API v3 |
+| **Notes** | Notion API |
+| **Push Notifications** | Web Push / VAPID (pywebpush) |
+| **Error Tracking** | Sentry |
+| **Rate Limiting** | Flask-Limiter |
+| **Frontend** | Vanilla HTML/CSS/JS, SVG animations, CSS custom properties |
 | **Hosting** | Railway |
 
 ## Where to Go Next

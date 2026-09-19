@@ -1,7 +1,7 @@
 ---
-title: "Connect Canvas LMS to IntelliPlan"
+title: "Connect Canvas LMS to IntelliPlan — OAuth 2.0 Setup"
 sidebarTitle: "Canvas"
-description: "Import assignments, due dates, points, and course names from Canvas LMS into IntelliPlan via OAuth 2.0 Developer Key — including multi-institution key overrides."
+description: "Import assignments, due dates, points, and course names from Canvas LMS into IntelliPlan via OAuth 2.0 Developer Key with multi-institution key overrides."
 ---
 
 Canvas LMS is IntelliPlan's most-used school integration. Once connected, IntelliPlan fetches every assignment from every enrolled course — including title, due date, points possible, and course name — and surfaces them on the dashboard ranked by AI priority scoring. The connection uses Canvas's standard OAuth 2.0 Developer Key flow, which means students authorize once and IntelliPlan handles token refresh automatically from that point forward. If your school runs its own Canvas instance rather than the public Instructure SaaS, IntelliPlan also supports per-institution credential overrides so students at any school can connect.
@@ -73,7 +73,7 @@ Canvas OAuth is per-instance — every Canvas deployment (Instructure SaaS, scho
 
 When a student clicks **Connect Canvas**, IntelliPlan redirects them to:
 
-```
+```text
 https://<canvas_base>/login/oauth2/auth
   ?client_id=<CANVAS_CLIENT_ID>
   &redirect_uri=<CANVAS_REDIRECT_URI>
@@ -83,7 +83,7 @@ https://<canvas_base>/login/oauth2/auth
 
 After the student approves access, Canvas redirects back to `CANVAS_REDIRECT_URI` with a `code` parameter. IntelliPlan exchanges that code at:
 
-```
+```http
 POST https://<canvas_base>/login/oauth2/token
 ```
 

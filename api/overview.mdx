@@ -1,5 +1,5 @@
 ---
-title: "IntelliPlan REST API — Developer Overview"
+title: "IntelliPlan REST API: Developer Reference and Overview"
 sidebarTitle: "Overview"
 description: "A complete reference to the IntelliPlan public REST API: base URL, authentication, error format, versioning, rate limits, and endpoint groups."
 ---
@@ -10,7 +10,7 @@ The IntelliPlan REST API gives your application direct, programmatic access to t
 
 All API requests target the following base URL. There are no environment-specific subdomains — the versioned path is the stable surface.
 
-```
+```text
 https://intelliplan.tech/api/v1/
 ```
 
@@ -212,7 +212,7 @@ Each IntelliPlan account can hold up to **5 active or pending keys**. Revoke unu
     `GET /api/v1/streak` — streak length, sparks balance, freeze count, current level, and quest state.
     Requires `read:streak`.
   </Card>
-  <Card title="Push Notifications" icon="bell" href="/api/authentication">
+  <Card title="Push Notifications" icon="bell" href="/api/overview">
     `POST /api/v1/push/register` — register an Expo push token for deadline reminders.
     `POST /api/v1/push/unregister` — remove a device token on sign-out.
     Requires `read:profile`.

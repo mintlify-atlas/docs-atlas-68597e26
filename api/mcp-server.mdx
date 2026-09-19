@@ -151,6 +151,9 @@ All tools are exposed as `async` functions via `FastMCP`. Each one performs a si
   <Card title="update_profile" icon="user-pen">
     Updates any combination of `grade_level`, `focus_areas` (list), `goals`, and `weekly_commitments`. Only fields you pass are changed.
   </Card>
+  <Card title="api_info" icon="circle-info">
+    Returns the IntelliPlan API endpoint catalogue and version. Useful for discovery — call this to see what routes are available.
+  </Card>
 </CardGroup>
 
 ---
@@ -264,6 +267,12 @@ All tools are exposed as `async` functions via `FastMCP`. Each one performs a si
   <ParamField body="weekly_commitments" type="string">
     Free-text description of extracurriculars, sports, or other recurring commitments.
   </ParamField>
+</Accordion>
+
+<Accordion title="api_info">
+  **HTTP:** `GET /api/v1/docs`
+
+  No parameters. Returns the IntelliPlan API endpoint catalogue and version string. Call this tool for discovery — it lists all available routes without requiring specific scopes.
 </Accordion>
 
 ---

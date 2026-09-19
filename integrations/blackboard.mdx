@@ -1,7 +1,7 @@
 ---
-title: "Connect Blackboard Learn to IntelliPlan"
+title: "Connect Blackboard Learn to IntelliPlan via OAuth 2.0"
 sidebarTitle: "Blackboard"
-description: "Connect Blackboard Learn via OAuth 2.0 three-legged flow — requires your school's Blackboard admin to register IntelliPlan's Application ID before students can sign in."
+description: "Connect Blackboard Learn via OAuth 2.0 three-legged flow — requires your school's Blackboard admin to register IntelliPlan's Application ID first."
 ---
 
 Blackboard Learn integration uses OAuth 2.0 three-legged authorization (3LO) to connect a student's Blackboard account to IntelliPlan and import gradebook due dates. Unlike Canvas or Google Classroom, Blackboard's REST API requires each institution to explicitly approve third-party applications before their students can complete the OAuth flow. This means two things have to be true before sign-in can work: IntelliPlan must be registered in the Anthology developer portal, and each school's Blackboard administrator must have added IntelliPlan's Application ID under their institution's REST API integrations with end-user access enabled. If the school has not done this yet, IntelliPlan shows the student exactly what steps their administrator needs to take — so they can forward the instructions rather than hitting a confusing error.

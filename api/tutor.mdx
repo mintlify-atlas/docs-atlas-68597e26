@@ -37,8 +37,7 @@ The primary multi-turn tutoring endpoint. Submit a conversation history and rece
     {
       "reply": "Great question! Before I show you the rule, let me ask: do you know what a derivative *means* conceptually? Like, what is it actually measuring about the function? 🤔",
       "conversation_id": 391,
-      "remaining": 48,
-      "limit": 50
+      "title": "Derivatives of x²"
     }
     ```
   </Tab>
@@ -68,16 +67,16 @@ The primary multi-turn tutoring endpoint. Submit a conversation history and rece
   The ID of the conversation record. Pass this in subsequent requests to continue the same thread.
 </ResponseField>
 
-<ResponseField name="remaining" type="integer">
-  Free messages remaining in the student's monthly tutor quota (default: 50/month).
+<ResponseField name="title" type="string">
+  Auto-generated conversation title derived from the first user message. Only set when the conversation is newly titled; otherwise reflects the stored title.
 </ResponseField>
 
-<ResponseField name="limit" type="integer">
-  Total monthly tutor message limit for this account.
+<ResponseField name="modality" type="object">
+  Present when the adaptive student model is active. Contains `mode` (the resolved modality string), `weights` (per-modality weight vector), and `active` (list of currently active modalities).
 </ResponseField>
 
 <Warning>
-The tutor endpoint enforces a monthly message limit (default 50 messages/month for free accounts). When the limit is reached, the endpoint returns HTTP `429` with `"error": "limit_reached"`. Responses also pass through an AI safety firewall — messages that violate content guidelines receive a refusal reply rather than a teaching response.
+The tutor endpoint enforces a monthly message limit (default 50 messages/month for free accounts). When the limit is reached, the endpoint returns HTTP `429` with `{"error": "limit_reached", "remaining": 0, "limit": 50}`. Responses also pass through an AI safety firewall — messages that violate content guidelines receive a refusal reply rather than a teaching response.
 </Warning>
 
 ---

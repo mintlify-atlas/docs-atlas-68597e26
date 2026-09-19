@@ -1,5 +1,5 @@
 ---
-title: "Export Study Schedules to Google Calendar"
+title: "Export AI Study Schedules to Google Calendar via OAuth"
 sidebarTitle: "Google Calendar"
 description: "Export AI-generated IntelliPlan study schedules to Google Calendar in one click via OAuth 2.0 with PKCE — every study block becomes a real calendar event."
 ---
@@ -138,7 +138,7 @@ Saved schedules persist across sessions, so a student can generate a plan on Mon
 </Accordion>
 
 <Accordion title="No refresh token is returned">
-  If the `GOOGLE_REFRESH_TOKEN` is missing after authorization, it is usually because `access_type=offline` and `prompt=consent` were not both set during the authorization request. IntelliPlan always sends both. If you see this in a self-hosted instance, verify that `get_auth_url` is being called with `purpose="calendar"` and not `purpose="login"`.
+  If no refresh token is returned after authorization, it is usually because `access_type=offline` and `prompt=consent` were not both set during the authorization request. IntelliPlan always sends both. If you see this in a self-hosted instance, verify that `get_auth_url` is being called with `purpose="calendar"` and not `purpose="login"`.
 </Accordion>
 
 <Accordion title="Events appear on the wrong Google account">

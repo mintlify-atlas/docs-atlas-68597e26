@@ -1,5 +1,5 @@
 ---
-title: "Authenticate with IntelliPlan API Keys and Tokens"
+title: "IntelliPlan API Authentication: Keys, Tokens & Scopes"
 sidebarTitle: "Authentication"
 description: "How to authenticate IntelliPlan API requests using scoped API keys (X-API-Key) or first-party Bearer tokens, with scope definitions and code examples."
 ---
@@ -130,7 +130,7 @@ curl -X POST https://intelliplan.tech/api/v1/auth/token \
 
 ```json title="Successful response"
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token": "InsiZW1haWwiOiAic3R1ZGVudEB1bml2ZXJzaXR5LmVkdSIsICJ1c2VyX2lkIjogNDJ9.YOUR_SIGNATURE",
   "token_type": "Bearer",
   "scopes": [
     "read:profile", "read:assignments", "read:tests",
@@ -147,7 +147,7 @@ curl -X POST https://intelliplan.tech/api/v1/auth/token \
 ```
 
 <ResponseField name="token" type="string">
-  The Bearer token to include in subsequent `Authorization: Bearer …` headers.
+  The Bearer token to include in subsequent `Authorization: Bearer …` headers. This is a signed, time-limited token produced by `itsdangerous.URLSafeTimedSerializer` — it is **not** a JWT. The token is opaque; do not attempt to decode or inspect its payload. Its default lifetime is **30 days** (configurable via the `INTELLIPLAN_TOKEN_AGE` environment variable). After expiry, `verify_token` returns `None` and the request is rejected with a `401 unauthorized` error.
 </ResponseField>
 
 <ResponseField name="token_type" type="string">

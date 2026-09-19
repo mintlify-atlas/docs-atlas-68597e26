@@ -1,10 +1,10 @@
 ---
-title: "Lifecycle Email Configuration with Resend or SMTP"
+title: "IntelliPlan Lifecycle Email Setup with Resend or SMTP"
 sidebarTitle: "Email"
 description: "Configure Resend or SMTP for transactional and lifecycle emails, set up DKIM/SPF on a sending subdomain, comply with CAN-SPAM, and schedule the cron jobs."
 ---
 
-IntelliPlan sends three types of lifecycle emails — a welcome message, a feedback request, and a weekly newsletter — plus transactional emails such as deadline reminders. All of them flow through a single email path: either Resend (preferred) or a generic SMTP server as a fallback. Getting email right requires more than an API key: you need a verified sending domain with correct DNS records, a physical postal address in every marketing email, and reply-to addresses that actually receive mail. This page walks through all of it.
+IntelliPlan sends four types of lifecycle emails — a welcome message, a feedback request, a weekly newsletter, and admin-triggered one-off newsletters — plus transactional emails such as deadline reminders. All of them flow through a single email path: either Resend (preferred) or a generic SMTP server as a fallback. Getting email right requires more than an API key: you need a verified sending domain with correct DNS records, a physical postal address in every marketing email, and reply-to addresses that actually receive mail. This page walks through all of it.
 
 ---
 
@@ -130,14 +130,14 @@ IntelliPlan sends four email variants. Every send passes `intelliplan.email.elig
   The welcome email is sent once per new account. It does not require marketing consent and is the only lifecycle email that sends without `MARKETING_POSTAL_ADDRESS` set.
 </Accordion>
 
-<Accordion title="Feedback Request (feedback_v1)">
-  **Trigger:** Cron, accounts that are 14–15 days old **and** have real activity (not dormant signups).
+<Accordion title="Feedback Request (feedback_v2)">
+  **Trigger:** Cron, accounts that are 7–8.5 days old **and** have real activity (not dormant signups).
 
   **Consent:** Requires `marketing_emails_opt_in = True`.
 
-  **Key:** `feedback_v1` — deduplicated so a daily sweep cannot ask someone twice.
+  **Key:** `feedback_v2` — deduplicated so a daily sweep cannot ask someone twice.
 
-  The feedback email invites students to answer a few short questions about their experience. The 14-day window and activity requirement are quality heuristics — to reach everyone who has given consent regardless of these filters, use the admin blast endpoint:
+  The feedback email invites students to answer a few short questions about their experience. The 7-day window and activity requirement are quality heuristics — to reach everyone who has given consent regardless of these filters, use the admin blast endpoint:
 
   ```bash
   # Dry run — returns recipient count, sends nothing

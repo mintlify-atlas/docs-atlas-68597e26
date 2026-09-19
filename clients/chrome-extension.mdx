@@ -10,7 +10,7 @@ The IntelliPlan Chrome Extension brings your planner right into the browser you 
 
 <CardGroup cols={2}>
   <Card title="Assignment Badge" icon="bell">
-    The extension icon shows a live badge with the count of pending assignments fetched from `/extension/tasks`. The count refreshes automatically via the service worker background script.
+    The extension icon shows a live badge with the count of pending assignments. The background service worker polls `/tasks/unified` every 30 minutes via a Chrome alarm and updates the badge text and colour — red for overdue, blue for due today.
   </Card>
   <Card title="Page Injection" icon="code">
     Content scripts run at `document_idle` on Canvas, StudentVue, PowerSchool, Aeries, Schoology, and several other SIS domains, surfacing an IntelliPlan panel without leaving the page.
@@ -19,7 +19,7 @@ The IntelliPlan Chrome Extension brings your planner right into the browser you 
     Sign in directly from the popup with your IntelliPlan email and password. Your token is persisted in `chrome.storage.local` so you stay logged in across browser restarts.
   </Card>
   <Card title="Quick Actions" icon="bolt">
-    Dismiss tasks, view your saved schedule, and check grades — all from the extension popup, backed by the same API endpoints the main web app uses.
+    View tasks, your saved schedule, and grades — all from the extension popup, backed by the same API endpoints the main web app uses.
   </Card>
 </CardGroup>
 
@@ -148,12 +148,35 @@ async function apiFetch(path, options = {}) {
   `credentials: "omit"` is intentional — the extension communicates via bearer token only, never relying on session cookies, which keeps the auth model portable across browser profiles.
 </Info>
 
-## Extension API Endpoints
+## Popup Tabs and API Endpoints
 
-The extension uses a dedicated set of endpoints on the IntelliPlan backend. All require a valid `Authorization: Bearer <token>` header obtained from the login endpoint.
+The popup has three tabs — **Tasks**, **Schedule**, and **Grades** — each backed by a standard IntelliPlan API endpoint. All requests require a valid `Authorization: Bearer <token>` header.
 
-<Accordion title="POST /extension/login">
-  Authenticates the extension with an email and password, returning a bearer token for subsequent requests. This is called when the user submits the login form in `popup.html`.
+<Accordion title="Tasks tab — GET /tasks/unified">
+  Loads overdue, today, and upcoming assignments for display and badge calculation. The background service worker (`background.js`) also polls this endpoint every 30 minutes to update the toolbar badge count and fire notifications.
+
+  **Response shape**
+  ```json
+  {
+    "overdue":   [{ "title": "Chapter 5 Reading", "due_date": "2025-06-08", "course": "AP Biology", "priority": "High" }],
+    "today":     [{ "title": "Problem Set 3",     "due_date": "2025-06-10", "course": "Calculus",   "priority": "Medium" }],
+    "upcoming":  []
+  }
+  ```
+
+  The badge text is set to the sum of overdue + today items. Red badge for any overdue work; blue badge for today-only.
+</Accordion>
+
+<Accordion title="Schedule tab — GET /schedule/saved">
+  Returns the student's saved AI-generated study schedule. The popup shows today's blocks with time slot, assignment name, course, and duration. A "Generate one in IntelliPlan" link opens the scheduler if no schedule is saved.
+</Accordion>
+
+<Accordion title="Grades tab — GET /grades/data">
+  Returns per-course grade data pulled live from the connected school platform. Displays course name, percentage, letter grade, and a colour-coded bar.
+</Accordion>
+
+<Accordion title="Authentication — POST /api/auth/login">
+  Called when the user submits the login form in `popup.html`. Returns a bearer token stored under `intelliplan_token` in `chrome.storage.local`.
 
   **Request body**
   ```json
@@ -161,45 +184,6 @@ The extension uses a dedicated set of endpoints on the IntelliPlan backend. All 
     "email": "student@example.edu",
     "password": "••••••••"
   }
-  ```
-
-  **Response**
-  ```json
-  {
-    "token": "<bearer-token>",
-    "user": { "id": 42, "name": "Alex", "email": "student@example.edu" }
-  }
-  ```
-</Accordion>
-
-<Accordion title="GET /extension/tasks">
-  Returns the list of pending assignments used to compute the toolbar badge count. The background service worker polls this endpoint on a schedule using the `alarms` permission.
-
-  **Response**
-  ```json
-  {
-    "tasks": [
-      { "id": "abc123", "title": "Chapter 5 Reading", "due": "2025-06-10", "course": "AP Biology" }
-    ],
-    "count": 1
-  }
-  ```
-</Accordion>
-
-<Accordion title="GET /extension/schedule">
-  Returns the student's saved AI-generated study schedule for display in the popup's schedule tab.
-</Accordion>
-
-<Accordion title="GET /extension/grades">
-  Returns per-course grade data pulled live from the connected school platform.
-</Accordion>
-
-<Accordion title="POST /extension/dismiss">
-  Marks a task as dismissed/completed directly from the extension popup, mirroring the `/dismiss` endpoint on the main site.
-
-  **Request body**
-  ```json
-  { "task_id": "abc123" }
   ```
 </Accordion>
 

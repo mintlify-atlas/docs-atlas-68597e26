@@ -1,5 +1,5 @@
 ---
-title: "Grades & Grade Modeler: Simulate Your GPA"
+title: "Grades & Grade Modeler: Simulate How Scores Affect GPA"
 sidebarTitle: "Grades"
 description: "View your live GPA and per-course grades pulled from your school platform. Use the Grade Modeler to simulate how upcoming scores will affect your GPA."
 ---
@@ -75,22 +75,22 @@ This means the Priority View and the Dashboard are not just sorted by due date â
 Grades are pulled live from every platform IntelliPlan supports:
 
 <CardGroup cols={3}>
-  <Card title="Canvas LMS" icon="graduation-cap">
+  <Card title="Canvas LMS" icon="graduation-cap" href="/integrations/canvas">
     Assignment scores, course grades, and GPA via the Canvas REST API.
   </Card>
-  <Card title="Google Classroom" icon="google">
+  <Card title="Google Classroom" icon="google" href="/integrations/google-classroom">
     Course grades and assignment scores via Google OAuth.
   </Card>
-  <Card title="StudentVue" icon="school">
+  <Card title="StudentVue" icon="school" href="/integrations/studentvue">
     Live grades and missing work via the StudentVue API.
   </Card>
-  <Card title="Schoology" icon="book">
+  <Card title="Schoology" icon="book" href="/integrations/schoology">
     Course and assignment grades via API key.
   </Card>
-  <Card title="Blackboard Learn" icon="chalkboard">
+  <Card title="Blackboard Learn" icon="chalkboard" href="/integrations/blackboard">
     Gradebook data via OAuth 2.0 (3LO).
   </Card>
-  <Card title="Moodle" icon="puzzle-piece">
+  <Card title="Moodle" icon="puzzle-piece" href="/integrations/moodle">
     Assignment grades via web-services token.
   </Card>
 </CardGroup>
@@ -113,7 +113,7 @@ Missing assignments are highlighted in the Grades view and appear in the **Overd
 
 The Grade Modeler calculates projected grades using the weighting scheme your school platform reports. The calculation is straightforward:
 
-```
+```text
 Projected course grade = (
     (sum of earned points on completed assignments)
   + (hypothetical score Ã— points possible for selected assignment)

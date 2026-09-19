@@ -1,5 +1,5 @@
 ---
-title: "Get IntelliPlan Running Locally in Minutes"
+title: "Quickstart: Get IntelliPlan Running Locally in 5 Min"
 sidebarTitle: "Quickstart"
 description: "Clone the repo, install Python dependencies, set three environment variables, and reach IntelliPlan on localhost:3000 in under five minutes."
 ---
@@ -128,15 +128,18 @@ Once the app is running and you've created an account, connect a school platform
     </Note>
   </Tab>
   <Tab title="Google Classroom">
-    Google Classroom uses OAuth 2.0. To use it locally you need Google OAuth credentials in your `.env`:
+    Google Classroom uses OAuth 2.0. To use it locally you need a dedicated Google OAuth client in your `.env`:
 
     ```env
     GOOGLE_CLASSROOM_CLIENT_ID=
     GOOGLE_CLASSROOM_CLIENT_SECRET=
-    GOOGLE_REDIRECT_URI=http://localhost:3000/oauth2callback
     ```
 
-    Then navigate to **Settings → Integrations → Google Classroom** and click **Connect with Google**.
+    The Classroom callback URL is built automatically from `APP_BASE_URL` (`/api/lms/callback/google_classroom`) — register that URI in your Google Cloud Console OAuth client. Then navigate to **Settings → Integrations → Google Classroom** and click **Connect with Google**.
+
+    <Note>
+      `GOOGLE_REDIRECT_URI` is the redirect URI for the separate **Google Calendar** OAuth client (`/oauth2callback`), not Google Classroom. The two integrations use different OAuth clients.
+    </Note>
   </Tab>
   <Tab title="StudentVue">
     1. Navigate to **Settings → Integrations → StudentVue**.

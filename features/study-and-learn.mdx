@@ -1,5 +1,5 @@
 ---
-title: "Study & Learn: Flashcards, Quizzes, and Summaries"
+title: "Study & Learn: Flashcards, Quizzes, and AI Summaries"
 sidebarTitle: "Study & Learn"
 description: "Upload notes or paste text to generate flashcards, quizzes, key concepts, and summaries. A built-in spaced repetition system tracks mastery per question."
 ---
@@ -63,7 +63,7 @@ IntelliPlan accepts content from multiple sources. You can mix and match — upl
 
 If you upload a photo of handwritten notes, IntelliPlan routes it through the AI vision pipeline before generating study materials.
 
-```
+```http
 POST /study/analyze-image
 ```
 
@@ -110,7 +110,7 @@ When you answer a quiz question, your response is sent to the AI for evaluation 
 - **Feedback is specific**: the AI explains exactly what was correct, what was missing, and what the complete answer should have been.
 - **Free-response questions** are supported alongside multiple-choice, so you can practice essay-style answers.
 
-```
+```http
 POST /study/evaluate
 ```
 

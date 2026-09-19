@@ -43,10 +43,10 @@ The app is organized around five tabs that follow the shape of a school day:
     ```
   </Step>
   <Step title="Start the dev server">
-    Run one of the start scripts below. The default `npm start` points at a **local** Flask server (auto-detected from the LAN address Expo serves from). Use `start:prod` to point at production:
+    Run one of the start scripts below. The default `npm start` launches Metro without setting an API base — the app uses the `__DEV__` defaults (Android emulator: `10.0.2.2:5000`; iOS simulator: `localhost:5000`). Use `start:prod` to explicitly target production:
 
     ```bash
-    # Local Flask server (auto-detected LAN address)
+    # __DEV__ defaults (Android emulator: 10.0.2.2:5000 / iOS: localhost:5000)
     npm start
 
     # Production API at https://intelliplan.tech
@@ -79,7 +79,7 @@ The app is organized around five tabs that follow the shape of a school day:
 </Steps>
 
 <Note>
-  Physical Android phones reach the host machine at `http://10.0.2.2:5000`; iOS simulators use `http://localhost:5000`. These are the `__DEV__` defaults already set in `lib/config.ts`. For a real phone on Expo Go, set `EXPO_PUBLIC_API_BASE` to your machine's LAN address (e.g. `http://192.168.1.20:5000`).
+  Physical Android phones reach the host machine at `http://10.0.2.2:5000`; iOS simulators use `http://localhost:5000`. These are the `__DEV__` defaults in the app's config. For a real phone on Expo Go, set `EXPO_PUBLIC_API_BASE` to your machine's LAN address (e.g. `http://192.168.1.20:5000`).
 </Note>
 
 ## API Base Override
@@ -94,7 +94,7 @@ EXPO_PUBLIC_API_BASE=https://staging.intelliplan.tech npx expo start
 EXPO_PUBLIC_API_BASE=http://192.168.1.20:5000 npx expo start
 ```
 
-`lib/config.ts` defaults to production in release builds, so `EXPO_PUBLIC_API_BASE` is the only knob you need — there is no risk of accidentally shipping a build that points at localhost.
+Production builds default to `https://intelliplan.tech` when `EXPO_PUBLIC_API_BASE` is unset, so there is no risk of accidentally shipping a build that points at localhost.
 
 ## Authentication
 
@@ -130,8 +130,8 @@ Sign-in exchanges email and password for a bearer token at `POST /api/v1/auth/to
 
 The app is designed to degrade gracefully when there's no signal:
 
-- **Reads are cached.** Every successful response is stored via `lib/useQuery.ts`. Opening the app offline shows the last loaded data behind an "Offline" notice rather than a spinner into an error.
-- **Writes are queued.** `lib/queue.ts` persists writes locally and replays them when connectivity returns. Only network-level failures (status 0, 502, 503, 504) are queued — a 400 surfaces immediately and rolls back the UI row so bugs don't hide.
+- **Reads are cached.** Every successful response is stored locally. Opening the app offline shows the last loaded data behind an "Offline" notice rather than a spinner into an error.
+- **Writes are queued.** Writes are persisted locally and replayed when connectivity returns. Only network-level failures (status 0, 502, 503, 504) are queued — a 400 surfaces immediately and rolls back the UI row so bugs don't hide.
 - **404 is not an error.** Several endpoints sit behind feature flags; a 404 renders a "not available" screen rather than an error state.
 
 ## EAS Build Profiles
@@ -170,8 +170,8 @@ The app is designed to degrade gracefully when there's no signal:
   Builds a custom Expo dev client for internal distribution. `EXPO_PUBLIC_API_BASE` defaults to the Android emulator host `10.0.2.2:5000`. Use this profile to test server-side push notifications, which **do not work in Expo Go on Android (SDK 53+)**.
 
   ```bash
-  npx eas build --profile development --platform android
-  npx eas build --profile development --platform ios
+  eas build --profile development --platform android
+  eas build --profile development --platform ios
   ```
 </Accordion>
 
@@ -179,7 +179,7 @@ The app is designed to degrade gracefully when there's no signal:
   Produces a distributable APK for Android (sideloadable, no Play Store needed) and a TestFlight build for iOS. Points at production. Hand this to beta testers.
 
   ```bash
-  npx eas build --profile preview --platform all
+  eas build --profile preview --platform all
   ```
 </Accordion>
 
@@ -187,18 +187,18 @@ The app is designed to degrade gracefully when there's no signal:
   Produces an Android App Bundle (AAB) for Google Play and an IPA for the App Store. `autoIncrement: true` bumps `versionCode` / `buildNumber` automatically on each build.
 
   ```bash
-  npx eas build    --profile production --platform all
-  npx eas submit   --profile production --platform all
+  eas build  --profile production --platform all
+  eas submit --profile production --platform all
   ```
 </Accordion>
 
 <Warning>
-  The app is **not yet on the App Store or Google Play**. Before the first submission you must run `npx eas init` (to fill in `extra.eas.projectId` for push tokens), set `ios.appleTeamId` and the Play service-account key in the `submit` block of `eas.json`, and bump `expo.version` in `app.json`.
+  The app is **not yet on the App Store or Google Play**. Before the first submission you must run `eas init` (to fill in `extra.eas.projectId` for push tokens), set `ios.appleTeamId` and the Play service-account key in the `submit` block of `eas.json`, and bump `expo.version` in `app.json`.
 </Warning>
 
 ## Push Notifications
 
-`lib/push.ts` registers an Expo push token with `POST /api/v1/push/register`. The server stores it in the same `PushSubscription` table used by browser VAPID subscriptions, so every existing reminder reaches the phone without changes at the call site. Sign-out unregisters the token first.
+The extension registers an Expo push token with `POST /api/v1/push/register`. The server stores it in the same `PushSubscription` table used by browser VAPID subscriptions, so every existing reminder reaches the phone without changes at the call site. Sign-out unregisters the token first.
 
 There are **two** separate reminder mechanisms:
 
@@ -242,14 +242,9 @@ mobile/
 │   ├── settings.tsx        # Profile sheet (modal)
 │   └── new-task.tsx        # Add a task (modal)
 ├── components/             # UI kit — Card, Button, Chip, TaskRow, Confirm…
-├── lib/                    # api.ts, auth.tsx, useQuery.ts, queue.ts, push.ts…
-├── theme/                  # Design tokens from ip-base.css
-├── assets/                 # App icons (generated from static/icons/icon-512.png)
+├── lib/                    # api.ts, auth.tsx, config.ts, push.ts…
+├── assets/                 # App icons
 ├── eas.json                # EAS build profiles
 ├── package.json
 └── tsconfig.json
 ```
-
-<Tip>
-  The `theme/tokens.ts` file is a direct copy of the web palette from `static/css/ip-base.css`. If the web design tokens change, regenerate with `scripts/gen-icons.py` so the phone app stays visually in sync.
-</Tip>
